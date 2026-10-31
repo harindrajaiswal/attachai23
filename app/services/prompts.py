@@ -1,4 +1,4 @@
-"""Prompt versioning, restoration, and live assistant preview service."""
+"""Centralized conversational system instructions, prompt versioning, restoration, and live assistant preview service."""
 
 from typing import Any, Dict, List, Optional
 from app.core.exceptions import NotFoundError, ValidationError
@@ -6,6 +6,127 @@ from app.repositories.base import BaseRepository
 from app.services.advanced_rag import AdvancedRagService
 from app.services.grounding import GroundingService
 from app.providers.llm import BaseLlmProvider
+
+
+def format_language_directive(language: str) -> str:
+    """Return a dynamic language instruction for the LLM without restricting to a fixed allowlist."""
+    lang = (language or "en").strip()
+    low = lang.lower()
+    if low == "hi":
+        return (
+            "Respond naturally in fluent, conversational Hindi (Devanagari script: हिंदी). "
+            "Keep exact numbers, currency values, and official plan/product names accurate."
+        )
+    if low == "hinglish":
+        return (
+            "Respond naturally in conversational Hinglish (Hindi written in Latin script mixed naturally with English). "
+            "Keep exact numbers, currency values, and official plan/product names accurate."
+        )
+    if low == "ur":
+        return (
+            "Respond naturally in fluent, polite Urdu (اردو). "
+            "Keep exact numbers, currency values, and official plan/product names accurate."
+        )
+    if low == "en":
+        return "Respond naturally in clear, warm, conversational English."
+    if low == "auto":
+        return (
+            "Detect the exact language of the user's message and respond naturally in that same language."
+        )
+    return (
+        f"Respond naturally and fluently in {lang}, matching the user's chosen language while keeping "
+        "exact numbers, currency values, and official plan/product names accurate."
+    )
+
+
+def build_conversational_system_prompt(
+    tenant: Dict[str, Any],
+    language: str = "en",
+    intent: str = "GENERAL_CONVERSATION",
+    memory_metadata: Optional[Dict[str, Any]] = None,
+    conversation_summary: str = "",
+) -> str:
+    """Build centralized system instructions for natural, context-aware, multilingual conversation."""
+    assistant_name = str(tenant.get("assistant_name") or "AI Assistant").strip()
+    business_name = str(
+        tenant.get("name") or tenant.get("company_name") or tenant.get("business_name") or ""
+    ).strip()
+    tenant_prompt = str(tenant.get("system_prompt") or "").strip()
+    tone = str(tenant.get("tone") or "helpful, warm, and natural").strip()
+    meta = memory_metadata or {}
+
+    identity_line = (
+        f"You are {assistant_name}, the AI assistant for {business_name}."
+        if business_name
+        else f"You are {assistant_name}, a helpful AI assistant."
+    )
+
+    memory_lines: List[str] = []
+    if conversation_summary:
+        memory_lines.append(f"Earlier Conversation Summary:\n{conversation_summary}")
+    if meta.get("current_topic"):
+        memory_lines.append(f"Current Active Topic: {meta['current_topic']}")
+    if meta.get("entities"):
+        memory_lines.append(f"Entities Discussed So Far: {', '.join(str(e) for e in meta['entities'])}")
+    memory_block = "\n".join(memory_lines)
+    tenant_prompt_line = f"Tenant Instructions: {tenant_prompt}\n" if tenant_prompt else ""
+    memory_section = f"{memory_block}\n" if memory_block else ""
+
+    return (
+        f"{identity_line}\n"
+        f"Personality & Tone: {tone}.\n"
+        f"{tenant_prompt_line}\n"
+        f"Language Directive: {format_language_directive(language)}\n"
+        f"Current Conversational Context Mode: {intent}\n"
+        f"{memory_section}\n"
+        "CORE CONVERSATIONAL GUIDELINES:\n"
+        "1. Communicate like an intelligent, natural human conversational partner (comparable to ChatGPT or Gemini).\n"
+        "2. Never use robotic templates, never repeat the same canned introduction on every turn, and never mention 'verified knowledge base', 'Unverified Answer', 'Fallback Answer', or internal system states.\n"
+        "3. Understand and reply in the user's chosen language—including Hindi (Devanagari), Hinglish, English, or any other language—and switch languages immediately whenever the user asks.\n"
+        "4. When the user asks who you are or what you can do, introduce yourself naturally using your configured identity and explain how you can help.\n"
+        "5. When the user asks what they asked earlier or refers to prior messages, use the actual conversation history to answer accurately. Never invent prior turns that did not happen.\n"
+        "6. Never fabricate company-specific prices, policies, addresses, guarantees, or contact details."
+    ).strip()
+
+
+def build_rag_system_prompt(
+    tenant: Dict[str, Any],
+    language: str,
+    evidence_chunks: List[Dict[str, Any]],
+    memory_metadata: Optional[Dict[str, Any]] = None,
+    conversation_summary: str = "",
+) -> str:
+    """Build centralized system instructions for grounded business RAG responses."""
+    base_prompt = build_conversational_system_prompt(
+        tenant=tenant,
+        language=language,
+        intent="KNOWLEDGE_QUESTION",
+        memory_metadata=memory_metadata,
+        conversation_summary=conversation_summary,
+    )
+    if evidence_chunks:
+        evidence_block = "\n\n---\n\n".join(
+            f"[Source: {c.get('source_filename', 'doc')}#{c.get('chunk_index', 0)}]\n{c.get('content', '')}"
+            for c in evidence_chunks
+        )
+        return (
+            f"{base_prompt}\n\n"
+            "FACTUAL GROUNDING RULES:\n"
+            "- Answer the user's question naturally and directly in the target language using the retrieved business evidence below.\n"
+            "- Do not start your response with robotic phrases like 'According to our verified records' or 'Hamare verified details ke mutabik'. Just answer naturally.\n"
+            "- Preserve exact numbers, prices, durations, and policy terms from the evidence.\n"
+            "- If the user asks to translate, compare, or explain earlier facts, use both the evidence below and the conversation history.\n"
+            "- Never invent prices, policies, addresses, guarantees, or contact details not supported by the evidence.\n\n"
+            f"RETRIEVED BUSINESS EVIDENCE:\n{evidence_block}"
+        )
+    return (
+        f"{base_prompt}\n\n"
+        "FACTUAL GROUNDING RULES (NO SPECIFIC DOCUMENT MATCHED):\n"
+        "- The user is asking for a specific business detail that is not present in the uploaded company documents.\n"
+        "- Politely and naturally let the user know in their language that you don't have that specific detail (such as an unlisted office address or unconfigured policy) in the available company information.\n"
+        "- Do not invent any company facts, prices, addresses, or contact details.\n"
+        "- Do not use robotic phrases like 'Unverified Answer' or 'Fallback Answer'."
+    )
 
 
 class PromptService:

@@ -34,12 +34,13 @@ UNSUPPORTED_GUARANTEE_PATTERNS = (
 
 FORBIDDEN_ROBOTIC_LABELS_RE = re.compile(
     r"^\s*(?:unverified\s+answer|fallback\s+answer|unverified\s+response|fallback\s+response|"
+    r"insufficient\s+retrieval|rag\s+failure|internal\s+intent\s+classification|"
     r"retrieval_failed|unsupported|internal_error)\s*[:\-–—]*\s*",
     re.IGNORECASE,
 )
 
 INTERNAL_STATUS_TOKENS_RE = re.compile(
-    r"\b(?:RETRIEVAL_FAILED|UNSUPPORTED_ANSWER|FALLBACK_MODE|INTERNAL_ERROR)\b"
+    r"\b(?:RETRIEVAL_FAILED|UNSUPPORTED_ANSWER|FALLBACK_MODE|INTERNAL_ERROR|INSUFFICIENT_RETRIEVAL|RAG_FAILURE)\b"
 )
 
 
@@ -48,7 +49,7 @@ def sanitize_customer_facing_text(text: str) -> str:
     cleaned = (text or "").strip()
     cleaned = FORBIDDEN_ROBOTIC_LABELS_RE.sub("", cleaned)
     cleaned = re.sub(
-        r"\b(?:unverified\s+answer|fallback\s+answer)\s*[:\-–—]?\s*",
+        r"\b(?:unverified\s+answer|fallback\s+answer|insufficient\s+retrieval|rag\s+failure)\s*[:\-–—]?\s*",
         "",
         cleaned,
         flags=re.IGNORECASE,
@@ -74,8 +75,8 @@ class GroundingService:
     ) -> GroundingResult:
         """Validate candidate_answer against evidence_chunks."""
         clean_fallback = sanitize_customer_facing_text(fallback_answer) or (
-            "I don't have verified details on that in our knowledge base yet. "
-            "Could you share a bit more context or leave your contact details so our team can help?"
+            "I don't have those specific details in our available information yet. "
+            "Please let me know if I can help with another question!"
         )
 
         if support_level == SupportLevel.UNKNOWN.value or not evidence_chunks:
@@ -147,11 +148,12 @@ class GroundingService:
             if phrase in answer_lower and phrase not in evidence_lower:
                 reasons.append(f"Answer contained unsupported guarantee phrase: '{phrase}'.")
 
-        # 5. Check content token overlap with evidence (supports English, Hindi, Hinglish, Urdu)
+        # 5. Check content token overlap with evidence (supports natural multilingual & translated responses)
         english_stopwords = {
             "the", "and", "for", "with", "that", "this", "from", "your", "are", "can", "our", "you",
+            "have", "has", "will", "would", "there", "their", "what", "when", "where", "which", "about",
             "hai", "hain", "kya", "mein", "aur", "ke", "ki", "ka", "ko", "se", "par", "bhi", "hum",
-            "aap", "aapka", "aapki", "hamara", "hamari", "hoti", "hota", "liye", "sakte",
+            "aap", "aapka", "aapki", "hamara", "hamari", "hoti", "hota", "liye", "sakte", "sakta",
         }
         raw_ascii_tokens = {
             w for w in re.findall(r"[a-z0-9]{3,}", answer_lower)
@@ -163,20 +165,27 @@ class GroundingService:
         }
 
         evidence_tokens = set(re.findall(r"[a-z0-9]{3,}", evidence_lower))
+        is_multilingual = language != "en" or bool(re.search(r"[^\x00-\x7F]", cleaned_answer))
 
-        if language in ("hi", "hinglish", "ur") or re.search(r"[\u0900-\u097F\u0600-\u06FF]", cleaned_answer):
+        if is_multilingual:
             effective_answer_tokens = (raw_ascii_tokens & evidence_tokens) | bridged_token_set
-            denom = max(1, len(effective_answer_tokens))
-            overlap_ratio = len(effective_answer_tokens & evidence_tokens) / denom if effective_answer_tokens else 1.0
+            matched = effective_answer_tokens & evidence_tokens
+            if matched:
+                overlap_ratio = max(0.35, len(matched) / max(1, len(effective_answer_tokens)))
+            elif not raw_ascii_tokens and not unverified_numbers:
+                # Pure non-Latin script translation where all numerical/contact claims passed
+                overlap_ratio = 0.50
+            else:
+                overlap_ratio = 0.0
             min_overlap = 0.25
         else:
-            effective_answer_tokens = raw_ascii_tokens
+            effective_answer_tokens = raw_ascii_tokens | bridged_token_set
             overlap_ratio = (
                 len(effective_answer_tokens & evidence_tokens) / max(1, len(effective_answer_tokens))
                 if effective_answer_tokens
                 else 0.0
             )
-            min_overlap = 0.35
+            min_overlap = 0.25
 
         if overlap_ratio < min_overlap:
             reasons.append(

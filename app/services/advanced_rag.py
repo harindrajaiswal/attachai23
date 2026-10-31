@@ -117,6 +117,8 @@ MULTILINGUAL_CONCEPT_MAP: Dict[str, List[str]] = {
 EXTENDED_SYNONYMS: Dict[str, List[str]] = {
     "long": ["annual", "yearly", "months", "year", "membership", "freeze", "plan"],
     "term": ["annual", "yearly", "months", "year", "membership", "plan", "contract"],
+    "service": ["services", "plan", "plans", "membership", "package", "features", "support", "pricing", "integration"],
+    "services": ["service", "plans", "plan", "memberships", "packages", "features", "support", "pricing", "integration"],
     "package": ["plan", "plans", "membership", "tier", "box", "service", "pricing"],
     "packages": ["plans", "memberships", "tiers", "boxes", "services", "pricing"],
     "plan": ["membership", "plans", "package", "tier", "pricing", "month"],
