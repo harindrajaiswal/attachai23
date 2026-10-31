@@ -170,12 +170,12 @@ class Settings:
         self.public_rate_limit_per_minute: int = _parse_int(env.get("PUBLIC_RATE_LIMIT_PER_MINUTE"), 60)
         self.admin_rate_limit_per_minute: int = _parse_int(env.get("ADMIN_RATE_LIMIT_PER_MINUTE"), 120)
 
-        # 8. RAG Diagnostics & Legacy Debug Flags (strictly off by default)
-        self.orbit_rag_diagnostics: bool = _parse_bool(env.get("ORBIT_RAG_DIAGNOSTICS"), False)
-        self.orbit_temp_debug_client_id: str = (env.get("ORBIT_TEMP_DEBUG_CLIENT_ID") or "").strip()
-        self.orbit_temp_debug_gousto: bool = _parse_bool(env.get("ORBIT_TEMP_DEBUG_GOUSTO"), False)
-        self.orbit_temp_debug_llm_input: bool = _parse_bool(env.get("ORBIT_TEMP_DEBUG_LLM_INPUT"), False)
-        self.orbit_temp_debug_puregym: bool = _parse_bool(env.get("ORBIT_TEMP_DEBUG_PUREGYM"), False)
+        # 8. RAG Diagnostics & Legacy Debug Flags (strictly disabled by default)
+        self.orbit_rag_diagnostics: bool = False
+        self.orbit_temp_debug_client_id: str = ""
+        self.orbit_temp_debug_gousto: bool = False
+        self.orbit_temp_debug_llm_input: bool = False
+        self.orbit_temp_debug_puregym: bool = False
 
         # 9. Optional TTS Settings (server-only; stays disabled unless full config supplied)
         self.tts_api_key: str = (env.get("TTS_API_KEY") or "").strip()

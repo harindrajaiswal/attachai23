@@ -18,33 +18,109 @@ from app.repositories.base import BaseRepository
 
 DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 ARABIC_URDU_RE = re.compile(r"[\u0600-\u06FF]")
+NON_LATIN_SCRIPT_RE = re.compile(r"[\u0400-\u052F\u0980-\u0DFF\u0E00-\u0E7F\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7AF]")
 
 HINGLISH_MARKERS = {
-    "mujhe", "mujhko", "aapke", "aapka", "aapki", "aap", "tumhare", "hamare",
-    "bataiye", "batao", "bataye", "batana", "kya", "hai", "hain", "ho",
-    "iska", "iske", "iski", "uska", "uske", "unke", "isme", "usme",
-    "baare", "bare", "mein", "me", "ke", "ki", "ka", "ko", "se", "aur",
-    "kitna", "kitne", "kitni", "kaise", "kab", "kahan", "kyun", "acha",
-    "namaste", "namaskar", "dhanyawad", "shukriya", "chahiye", "milega",
-    "milta", "lagta", "paisa", "paise", "kharcha", "mahine", "saal", "salana",
-    "suvidha", "fayde", "fayda",
+    "mujhe", "mujhko", "mera", "meri", "mere", "hum", "humne", "hamara", "hamari", "hamare",
+    "aap", "aapke", "aapka", "aapki", "aapse", "tum", "tumhare", "tumhara", "tumhari", "tumse",
+    "bataiye", "batao", "bataye", "batana", "samjhao", "samjhaiye", "likho", "bolo", "karo", "kariye",
+    "kya", "kaun", "kaise", "kaisa", "kaisi", "kab", "kahan", "kyun", "kitna", "kitne", "kitni",
+    "hai", "hain", "ho", "hoon", "tha", "thi", "the", "hoga", "hogi",
+    "iska", "iske", "iski", "uska", "uske", "uski", "unke", "isme", "usme",
+    "baare", "bare", "mein", "ke", "ki", "ka", "ko", "se", "aur", "ya", "par", "bhi", "toh", "ab",
+    "pehle", "pahle", "poochha", "poocha", "pucha", "puchha", "baat", "karte", "karta", "karti",
+    "nahi", "nahin", "mat", "sakte", "sakta", "sakti", "chahiye", "milega", "milta", "lagta",
+    "namaste", "namaskar", "dhanyawad", "dhanyavaad", "shukriya", "alvida",
+    "paisa", "paise", "kharcha", "mahine", "saal", "salana", "suvidha", "fayde", "fayda", "doosra", "pehla",
+}
+
+STRONG_HINGLISH_MARKERS = {
+    "mujhe", "mujhko", "humne", "tumse", "aapke", "aapka", "aapki", "bataiye", "batao",
+    "kya", "kaun", "kaise", "hai", "hain", "iska", "iske", "iski", "baare", "mein",
+    "pehle", "poochha", "poocha", "pucha", "baat", "karo", "likho", "karte", "sakte",
+    "namaste", "namaskar", "shukriya", "dhanyawad",
 }
 
 URDU_ROMAN_MARKERS = {
-    "assalamualaikum", "walaikum", "shukriya", "meherbani", "khuwahish", "maloomat",
+    "assalamualaikum", "walaikum", "meherbani", "khuwahish", "maloomat", "sahulat", "qimat",
 }
+
+LANGUAGE_SWITCH_DIRECTIVE_RE = re.compile(
+    r"(?:\b(?:speak|talk|reply|respond|write|explain|translate|chat|converse|continue|switch)\b.*?\b(?:in|to|into)\s+([a-zA-Z]+)\b)|"
+    r"(?:\b([a-zA-Z]+)\s+mein\s+(?:baat|likho|likhiye|batao|bataiye|samjhao|samjhaiye|boliye|bolo|jawaab|uttar))|"
+    r"(?:हिंदी\s+में\s+(?:बात|लिखो|लिखिए|बताओ|बताइए|समझाओ|समझाइए|जवाब))|"
+    r"(?:अंग्रेजी\s+में\s+(?:बात|लिखो|बताओ|समझाओ))",
+    re.IGNORECASE,
+)
+
+TRANSLATE_OR_EXPLAIN_PREVIOUS_RE = re.compile(
+    r"\b(?:explain\s+(?:it|that|this|your\s+previous\s+answer|the\s+previous\s+answer)\s+in\s+[a-zA-Z]+|"
+    r"translate\s+(?:it|that|this|your\s+previous\s+answer|the\s+previous\s+answer|your\s+last\s+message)\s+(?:to|into|in)\s+[a-zA-Z]+|"
+    r"now\s+explain\s+(?:that|it|this)\s+in\s+[a-zA-Z]+|"
+    r"isko\s+[a-zA-Z]+\s+mein\s+(?:batao|bataiye|samjhao|translate\s+karo)|"
+    r"इसे\s+हिंदी\s+में\s+(?:समझाओ|बताओ|अनुवाद\s+करो))\b",
+    re.IGNORECASE,
+)
 
 GREETING_PATTERNS = re.compile(
     r"^\s*(?:hello|hi|hey|hiya|good\s+(?:morning|afternoon|evening|day)|"
-    r"namaste|namaskar|pranam|assalamu\s*alaikum|salam|hola|bonjour|"
+    r"namaste|namaskar|pranam|assalamu\s*alaikum|salam|hola|bonjour|ciao|hallo|ola|"
     r"नमस्ते|नमस्कार|प्रणाम|हैलो|हाय|सलाम)"
-    r"(?:\s*[!,.?]*)?(?:\s+(?:how\s+are\s+you(?:\s+doing)?|kaise\s+ho|kaise\s+hain|kya\s+haal\s+hai| कैसे\s+हैं|कैसे\s+हो))?\s*[!,.?]*\s*$",
+    r"(?:\s*[!,.?]*)?(?:\s+(?:there|friend|assistant|ji|जी|how\s+are\s+you(?:\s+doing|\s+today)?|kaise\s+ho|kaise\s+hain|kya\s+haal\s+hai|कैसे\s+हैं|कैसे\s+हो|आप\s+कैसे\s+हैं))?\s*[!,.?]*\s*$",
     re.IGNORECASE,
 )
 
 HOW_ARE_YOU_PATTERNS = re.compile(
-    r"^\s*(?:how\s+are\s+you(?:\s+doing|\s+today)?|how's\s+it\s+going|"
-    r"kya\s+haal\s+hai|(?:aap\s+)?kaise\s+(?:hain|ho)(?:\s+aap)?|आप\s+कैसे\s+हैं|कैसे\s+हो)\s*[!,.?]*\s*$",
+    r"^\s*(?:how\s+are\s+you(?:\s+doing|\s+today)?|how's\s+it\s+going|how\s+do\s+you\s+do|"
+    r"kya\s+haal\s+hai|(?:aap\s+|tum\s+)?kaise\s+(?:hain|ho)(?:\s+aap)?|आप\s+कैसे\s+हैं|आप\s+कैसे\s+हो|तुम\s+कैसे\s+हो|कैसे\s+हो)\s*[!,.?]*\s*$",
+    re.IGNORECASE,
+)
+
+IDENTITY_PATTERNS = re.compile(
+    r"^\s*(?:who\s+are\s+you|what\s+is\s+your\s+name|tell\s+me\s+about\s+yourself|introduce\s+yourself|"
+    r"(?:aap|tum)\s+kaun\s+(?:ho|hain)|aapka\s+naam\s+kya\s+hai|tumhara\s+naam\s+kya\s+hai|"
+    r"(?:आप|तुम)\s+कौन\s+(?:हो|हैं)|आपका\s+नाम\s+क्या\s+है|तुम्हारा\s+नाम\s+क्या\s+है)\s*[!,.?]*\s*$",
+    re.IGNORECASE,
+)
+
+CAPABILITY_PATTERNS = re.compile(
+    r"^\s*(?:what\s+can\s+you\s+do|what\s+do\s+you\s+do|how\s+can\s+you\s+help(?:\s+me)?|"
+    r"what\s+can\s+you\s+help(?:\s+me)?\s+with|what\s+information\s+can\s+you\s+provide|"
+    r"can\s+i\s+ask\s+you\s+questions|what\s+are\s+your\s+capabilities|what\s+is\s+your\s+(?:job|role|work)|"
+    r"(?:aap|tum)\s+kya\s+(?:karte|karti|kar\s+sakte|kar\s+sakti)\s+(?:ho|hain)|"
+    r"(?:tumhara|aapka)\s+kaam\s+kya\s+hai|kya\s+kaam\s+hai\s+(?:tumhara|aapka)|"
+    r"(?:aap|tum)\s+meri\s+kya\s+(?:madad|help)\s+kar\s+sakte\s+(?:ho|hain)|"
+    r"(?:आप|तुम)\s+क्या\s+(?:करते|करती|कर\s+सकते|कर\s+सकती)\s+(?:हो|हैं)|"
+    r"(?:तुम्हारा|आपका)\s+काम\s+क्या\s+है|"
+    r"आप\s+मेरी\s+कैसे\s+मदद\s+कर\s+सकते\s+हैं)\s*[!,.?]*\s*$",
+    re.IGNORECASE,
+)
+
+LANGUAGE_ABILITY_PATTERNS = re.compile(
+    r"^\s*(?:can\s+you\s+(?:speak|talk|understand|write|chat)(?:\s+in)?\s+[a-zA-Z]+|"
+    r"do\s+you\s+(?:speak|know|understand)\s+[a-zA-Z]+|"
+    r"(?:kya\s+)?(?:aap|tum)\s+[a-zA-Z]+(?:\s+mein)?\s+(?:baat|bol|likh|samajh)(?:\s+nahi)?\s*(?:kar\s+)?(?:sakte|sakta|sakti)?\s*(?:ho|hain)?|"
+    r"(?:क्या\s+)?(?:आप|तुम)\s+हिंदी(?:\s+में)?\s+(?:बात|बोल|लिख|समझ)(?:\s+नहीं)?\s*(?:कर\s+)?(?:सकते|सकता|सकती)?\s*(?:हो|हैं)?)\s*[!,.?]*\s*$",
+    re.IGNORECASE,
+)
+
+MEMORY_RECALL_PATTERNS = re.compile(
+    r"^\s*(?:what\s+did\s+i\s+ask(?:\s+you)?\s+(?:earlier|before|previously|first|last\s+time)|"
+    r"what\s+was\s+my\s+(?:previous|earlier|first|last)\s+question|"
+    r"do\s+you\s+remember\s+what\s+i\s+asked|"
+    r"(?:humne|maine)\s+(?:tumse|aapse)?\s*(?:pehle|pahle|abhi)\s+kya\s+(?:poochha|poocha|pucha|puchha|kaha)\s*(?:tha)?|"
+    r"(?:मैंने|हमने)\s+(?:तुमसे|आपसे)?\s*(?:पहले|अभी)\s+क्या\s+(?:पूछा|कहा)\s*(?:था)?|"
+    r"(?:can\s+you\s+|please\s+)?explain\s+that\s+again|repeat\s+that|can\s+you\s+repeat\s+that|"
+    r"what\s+did\s+you\s+mean(?:\s+by\s+that)?|continue\s+from\s+where\s+we\s+stopped|"
+    r"phir\s+se\s+(?:batao|bataiye|samjhao)|dobara\s+(?:batao|bataiye|samjhaiye))\s*[!,.?]*\s*$",
+    re.IGNORECASE,
+)
+
+GENERAL_CHITCHAT_PATTERNS = re.compile(
+    r"^\s*(?:tell\s+me\s+something\s+interesting|tell\s+me\s+a\s+fun\s+fact|tell\s+me\s+a\s+joke|"
+    r"kuch\s+interesting\s+(?:batao|bataiye)|कुछ\s+रोचक\s+बताओ|"
+    r"nice\s+to\s+meet\s+you|pleasure\s+talking\s+to\s+you|you\s+are\s+(?:great|helpful|smart|awesome)|"
+    r"i\s+have\s+a\s+question|i\s+have\s+another\s+question|one\s+more\s+question)\s*[!,.?]*\s*$",
     re.IGNORECASE,
 )
 
@@ -54,17 +130,7 @@ GRATITUDE_OR_CLOSING_PATTERNS = re.compile(
     r"धन्यवाद|शुक्रिया|बहुत\s+धन्यवाद|"
     r"that(?:'s|\s+is)\s+(?:very\s+)?helpful|got\s+it|understood|makes\s+sense|"
     r"okay\s+thank\s+you|ok\s+thanks|great\s+thanks|awesome\s+thanks|perfect\s+thanks|"
-    r"bye|goodbye|see\s+you|have\s+a\s+good\s+day)\s*[!,.?]*\s*$",
-    re.IGNORECASE,
-)
-
-REPEAT_OR_META_PATTERNS = re.compile(
-    r"^\s*(?:can\s+you\s+explain\s+that\s+again|please\s+explain\s+that\s+again|"
-    r"explain\s+that\s+again|repeat\s+that|can\s+you\s+repeat\s+that|"
-    r"i\s+have\s+another\s+question|one\s+more\s+question|"
-    r"what\s+can\s+you\s+help\s+(?:me\s+)?with|how\s+can\s+you\s+help(?:\s+me)?|"
-    r"who\s+are\s+you|what\s+do\s+you\s+do|"
-    r"aap\s+kya\s+kar\s+sakte\s+(?:ho|hain)|phir\s+se\s+batao|dobara\s+bataiye)\s*[!,.?]*\s*$",
+    r"bye|goodbye|see\s+you|have\s+a\s+good\s+day|alvida)\s*[!,.?]*\s*$",
     re.IGNORECASE,
 )
 
@@ -77,10 +143,11 @@ SUMMARY_INTENT_RE = re.compile(
 
 FOLLOW_UP_PRONOUN_RE = re.compile(
     r"\b(?:it|its|they|them|their|that|those|this|these|"
-    r"iska|iske|iski|uska|uske|uski|unke|unki|isme|usme|is|us|"
-    r"second\s+option|first\s+option|third\s+option|other\s+option|previous|"
-    r"annual\s+option|monthly\s+option|what\s+about|how\s+about)\b|"
-    r"(?:इसका|इसके|इसकी|उसका|उसके|उसकी|उनके|इसमें)",
+    r"iska|iske|iski|uska|uske|uski|unke|unki|isme|usme|"
+    r"second\s+(?:option|plan|tier|package)|first\s+(?:option|plan|tier|package)|third\s+(?:option|plan|tier|package)|"
+    r"other\s+(?:option|plan)|previous\s+(?:one|plan|option)|"
+    r"better\s+than|compare\s+it|annual\s+option|monthly\s+option|what\s+about|how\s+about)\b|"
+    r"(?:इसका|इसके|इसकी|उसका|उसके|उसकी|उनके|इसमें|दूसरा\s+प्लान|पहला\s+प्लान)",
     re.IGNORECASE,
 )
 
@@ -104,27 +171,94 @@ TOPIC_STOPWORDS = {
     "cost", "charges", "fee", "fees", "benefits", "details", "option", "options",
 }
 
+LANGUAGE_NAME_NORMALIZATION = {
+    "hindi": "hi",
+    "हिंदी": "hi",
+    "english": "en",
+    "अंग्रेजी": "en",
+    "angrezi": "en",
+    "hinglish": "hinglish",
+    "urdu": "ur",
+    "اردو": "ur",
+}
 
-def detect_language(text: str) -> str:
-    """Detect whether the user message is Hindi ('hi'), Urdu ('ur'), Hinglish ('hinglish'), or English ('en')."""
+
+def extract_requested_language(text: str) -> Optional[str]:
+    """Check if the user message explicitly asks to switch to or respond in a specific language."""
     cleaned = (text or "").strip()
     if not cleaned:
+        return None
+    if LANGUAGE_ABILITY_PATTERNS.match(cleaned):
+        return None
+    if re.search(r"हिंदी\s+में", cleaned):
+        return "hi"
+    if re.search(r"अंग्रेजी\s+में", cleaned):
         return "en"
+
+    m = LANGUAGE_SWITCH_DIRECTIVE_RE.search(cleaned)
+    if m:
+        raw_lang = (m.group(1) or m.group(2) or "").strip().lower()
+        if raw_lang and raw_lang not in ("detail", "details", "short", "brief", "depth", "full", "simple", "plain", "person", "advance", "general"):
+            return LANGUAGE_NAME_NORMALIZATION.get(raw_lang, raw_lang)
+
+    # Also catch short patterns like "Hindi mein likho", "Hindi mein baat karo", "Explain it in Hindi"
+    m2 = re.search(
+        r"\b(?:in|into|to)\s+(hindi|english|hinglish|urdu|spanish|french|german|tamil|bengali|marathi|gujarati|punjabi|telugu|arabic|japanese|korean|chinese)\b",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m2:
+        raw_lang = m2.group(1).strip().lower()
+        return LANGUAGE_NAME_NORMALIZATION.get(raw_lang, raw_lang)
+
+    m3 = re.search(
+        r"\b(hindi|english|hinglish|urdu|spanish|french|german|tamil|bengali|marathi|gujarati|punjabi|telugu|arabic)\s+mein\b",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m3:
+        raw_lang = m3.group(1).strip().lower()
+        return LANGUAGE_NAME_NORMALIZATION.get(raw_lang, raw_lang)
+
+    return None
+
+
+def detect_language(text: str, prior_language: Optional[str] = None) -> str:
+    """Dynamically detect the user's language or requested language switch without a fixed allowlist."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return prior_language or "en"
+
+    # 1. Explicit language switch or translation target takes highest priority
+    requested = extract_requested_language(cleaned)
+    if requested:
+        return requested
+
+    # 2. Script-based detection
     if DEVANAGARI_RE.search(cleaned):
         return "hi"
     if ARABIC_URDU_RE.search(cleaned):
         return "ur"
+    if NON_LATIN_SCRIPT_RE.search(cleaned):
+        return "auto"
 
     tokens = re.findall(r"[a-zA-Z]+", cleaned.lower())
     if not tokens:
-        return "en"
+        return prior_language or "en"
 
     hinglish_hits = sum(1 for t in tokens if t in HINGLISH_MARKERS)
+    strong_hinglish_hits = sum(1 for t in tokens if t in STRONG_HINGLISH_MARKERS)
     urdu_hits = sum(1 for t in tokens if t in URDU_ROMAN_MARKERS)
+
     if urdu_hits >= 1 and hinglish_hits >= 1:
         return "hinglish"
-    if hinglish_hits >= 2 or (len(tokens) <= 4 and hinglish_hits >= 1 and tokens[0] in ("namaste", "namaskar", "mujhe", "kya", "iska", "shukriya", "dhanyawad", "kaise")):
+    if hinglish_hits >= 2 or strong_hinglish_hits >= 1:
         return "hinglish"
+
+    # If the user previously explicitly switched to Hindi ('hi') and sends a very short 1-2 word prompt like "Ok"
+    if prior_language and len(tokens) <= 1 and tokens[0] in ("ok", "okay", "yes", "no", "acha", "haan"):
+        return prior_language
+
     return "en"
 
 
@@ -150,6 +284,53 @@ def is_summary_request(message: str) -> bool:
     return bool(SUMMARY_INTENT_RE.search(cleaned) and len(cleaned.split()) <= 12)
 
 
+def classify_conversational_sub_intent(
+    message: str,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[str]:
+    """Identify specific conversational sub-modes (IDENTITY, CAPABILITIES, LANGUAGE_ABILITY,
+    MEMORY_RECALL, LANGUAGE_SWITCH, TRANSLATE_PREVIOUS, CHITCHAT) so responses are never forced into RAG fallback.
+    """
+    cleaned = (message or "").strip()
+    if not cleaned:
+        return None
+
+    if TRANSLATE_OR_EXPLAIN_PREVIOUS_RE.search(cleaned):
+        return "TRANSLATE_PREVIOUS"
+
+    # Pure language switch command (e.g., "Hindi mein likho", "Ab Hindi mein baat karo", "Speak in Hindi")
+    req_lang = extract_requested_language(cleaned)
+    if req_lang and len(cleaned.split()) <= 8 and not any(
+        bw in cleaned.lower()
+        for bw in ("price", "pricing", "plan", "plans", "refund", "cancel", "policy", "membership", "hours", "address")
+    ):
+        if any(
+            w in cleaned.lower()
+            for w in ("explain", "translate", "that", "it", "previous", "isko", "इसे")
+        ) and conversation_history:
+            return "TRANSLATE_PREVIOUS"
+        if LANGUAGE_ABILITY_PATTERNS.match(cleaned):
+            return "LANGUAGE_ABILITY"
+        return "LANGUAGE_SWITCH"
+
+    if MEMORY_RECALL_PATTERNS.match(cleaned):
+        return "MEMORY_RECALL"
+
+    if IDENTITY_PATTERNS.match(cleaned):
+        return "IDENTITY"
+
+    if CAPABILITY_PATTERNS.match(cleaned):
+        return "CAPABILITIES"
+
+    if LANGUAGE_ABILITY_PATTERNS.match(cleaned):
+        return "LANGUAGE_ABILITY"
+
+    if GENERAL_CHITCHAT_PATTERNS.match(cleaned):
+        return "CHITCHAT"
+
+    return None
+
+
 def classify_message_intent(
     message: str,
     conversation_history: Optional[List[Dict[str, Any]]] = None,
@@ -168,7 +349,11 @@ def classify_message_intent(
     if GREETING_PATTERNS.match(cleaned) or HOW_ARE_YOU_PATTERNS.match(cleaned):
         return "GREETING"
 
-    if GRATITUDE_OR_CLOSING_PATTERNS.match(cleaned) or REPEAT_OR_META_PATTERNS.match(cleaned):
+    sub_intent = classify_conversational_sub_intent(cleaned, conversation_history)
+    if sub_intent in ("IDENTITY", "CAPABILITIES", "LANGUAGE_ABILITY", "MEMORY_RECALL", "LANGUAGE_SWITCH", "TRANSLATE_PREVIOUS", "CHITCHAT"):
+        return "GENERAL_CONVERSATION"
+
+    if GRATITUDE_OR_CLOSING_PATTERNS.match(cleaned):
         return "GENERAL_CONVERSATION"
 
     if OUT_OF_SCOPE_PATTERNS.search(cleaned):

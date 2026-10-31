@@ -7,27 +7,85 @@ from tests.conftest import IsolatedOrbitTestEnv
 
 
 def build_minimal_docx(paragraphs: list[str]) -> bytes:
-    """Create a real OOXML .docx archive in memory for testing."""
+    """Create a valid minimal OOXML .docx archive for testing."""
+    from xml.sax.saxutils import escape
+
     buf = io.BytesIO()
-    xml_body = "".join(f"<w:p><w:r><w:t>{p}</w:t></w:r></w:p>" for p in paragraphs)
+
+    xml_body = "".join(
+        f"<w:p><w:r><w:t>{escape(p)}</w:t></w:r></w:p>" for p in paragraphs
+    )
+
     doc_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f"<w:body>{xml_body}</w:body></w:document>"
+        f"<w:body>{xml_body}<w:sectPr/></w:body></w:document>"
     )
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
         zf.writestr("word/document.xml", doc_xml)
+
     return buf.getvalue()
 
 
 def build_minimal_pdf(text: str) -> bytes:
-    """Create a valid PDF document with text stream for testing."""
-    return (
-        b"%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
-        b"4 0 obj << /Length 64 >>\nstream\n"
-        b"BT /F1 12 Tf 72 720 Td (" + text.encode("utf-8") + b") Tj ET\n"
-        b"endstream\nendobj\n%%EOF"
+    """Create a valid PDF document with extractable text."""
+    from pypdf import PdfWriter
+    from pypdf.generic import (
+        DictionaryObject,
+        NameObject,
+        DecodedStreamObject,
+        ArrayObject,
     )
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+
+    font = DictionaryObject()
+    font.update(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+
+    resources = DictionaryObject()
+    resources[NameObject("/Font")] = DictionaryObject(
+        {NameObject("/F1"): writer._add_object(font)}
+    )
+    page[NameObject("/Resources")] = writer._add_object(resources)
+
+    safe_text = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+    stream = DecodedStreamObject()
+    stream.set_data(
+        f"BT /F1 12 Tf 72 720 Td ({safe_text}) Tj ET".encode(
+            "latin-1", errors="replace"
+        )
+    )
+    page[NameObject("/Contents")] = writer._add_object(stream)
+
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 class TestKnowledge(unittest.TestCase):
@@ -68,7 +126,7 @@ class TestKnowledge(unittest.TestCase):
 
         # 3. CSV with quoted fields, escaped quotes, and multiline values (Fixes Defect #14)
         csv_content = (
-            'Service,Price,Description\n'
+            "Service,Price,Description\n"
             '"Personal Training","$85/session","Includes ""Custom Macro Plan"",\nbody composition scan, and mobility coaching."\n'
         )
         r_csv = self.env.client.post(
@@ -85,8 +143,11 @@ class TestKnowledge(unittest.TestCase):
         self.assertGreaterEqual(r_csv.json()["chunk_count"], 1)
 
         # 4. DOCX
-        docx_bytes = build_minimal_docx(["Corporate wellness packages start at $499 per month."])
+        docx_bytes = build_minimal_docx(
+            ["Corporate wellness packages start at $499 per month."]
+        )
         import asyncio
+
         docx_rec = asyncio.run(
             self.env.app.container.knowledge_service.ingest_document(
                 tenant_id=self.tid,
@@ -98,7 +159,9 @@ class TestKnowledge(unittest.TestCase):
         self.assertEqual(docx_rec["status"], "ready")
 
         # 5. PDF
-        pdf_bytes = build_minimal_pdf("Annual membership discount is 15 percent when paid upfront.")
+        pdf_bytes = build_minimal_pdf(
+            "Annual membership discount is 15 percent when paid upfront."
+        )
         pdf_rec = asyncio.run(
             self.env.app.container.knowledge_service.ingest_document(
                 tenant_id=self.tid,
@@ -112,14 +175,22 @@ class TestKnowledge(unittest.TestCase):
     def test_unsupported_empty_and_oversized_rejected(self) -> None:
         bad_ext = self.env.client.post(
             "/api/admin/knowledge/upload",
-            json_body={"tenant_id": self.tid, "filename": "malware.exe", "content": "echo hi"},
+            json_body={
+                "tenant_id": self.tid,
+                "filename": "malware.exe",
+                "content": "echo hi",
+            },
             headers=self.env.admin_headers,
         )
         self.assertEqual(bad_ext.status_code, 422)
 
         empty_doc = self.env.client.post(
             "/api/admin/knowledge/upload",
-            json_body={"tenant_id": self.tid, "filename": "empty.txt", "content": "   "},
+            json_body={
+                "tenant_id": self.tid,
+                "filename": "empty.txt",
+                "content": "   ",
+            },
             headers=self.env.admin_headers,
         )
         self.assertEqual(empty_doc.status_code, 422)
@@ -160,7 +231,9 @@ class TestKnowledge(unittest.TestCase):
         # Verify v2 still answers customer queries accurately
         chat_resp = self.env.client.post(
             "/v1/chat",
-            json_body={"message": "How many days does the refund policy allow for returns?"},
+            json_body={
+                "message": "How many days does the refund policy allow for returns?"
+            },
             headers={"x-api-key": self.api_key},
         ).json()
         self.assertIn("45 days", chat_resp["answer"])

@@ -90,8 +90,10 @@ UPGRADED_FILES_MANIFEST = (
     "app/services/chat.py",
     "app/services/conversations.py",
     "app/services/grounding.py",
+    "app/services/prompts.py",
     "static/css/widget.css",
     "static/js/widget.js",
+    "tests/test_conversational_intelligence.py",
     "tests/test_security.py",
     "tests/test_upgrades.py",
 )

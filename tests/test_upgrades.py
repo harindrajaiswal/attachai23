@@ -111,7 +111,7 @@ class TestUpgradesSuite(unittest.TestCase):
         self.assertEqual(data["language"], "hi")
         self.assertFalse(data["isFallback"])
         self.assertTrue(data["groundingPassed"])
-        self.assertIn("हमारे सत्यापित रिकॉर्ड के अनुसार", data["answer"])
+        self.assertNotIn("हमारे सत्यापित रिकॉर्ड के अनुसार", data["answer"])
         self.assertTrue("$59" in data["answer"] or "$99" in data["answer"])
 
     def test_a07_hinglish_question_against_english_docs(self) -> None:
@@ -125,7 +125,7 @@ class TestUpgradesSuite(unittest.TestCase):
         self.assertEqual(data["language"], "hinglish")
         self.assertFalse(data["isFallback"])
         self.assertTrue(data["groundingPassed"])
-        self.assertIn("Hamare verified details ke mutabik", data["answer"])
+        self.assertNotIn("Hamare verified details ke mutabik", data["answer"])
         self.assertTrue("$59" in data["answer"] or "$99" in data["answer"])
 
     def test_a08_urdu_question_against_english_docs(self) -> None:
@@ -139,7 +139,8 @@ class TestUpgradesSuite(unittest.TestCase):
         self.assertEqual(data["language"], "ur")
         self.assertFalse(data["isFallback"])
         self.assertTrue(data["groundingPassed"])
-        self.assertIn("ہمارے تصدیق شدہ ریکارڈ کے مطابق", data["answer"])
+        self.assertNotIn("ہمارے تصدیق شدہ ریکارڈ کے مطابق", data["answer"])
+        self.assertTrue("$59" in data["answer"] or "$99" in data["answer"])
 
     def test_a09_synonym_based_query_matches_relevant_documents(self) -> None:
         resp = self.client.post(
@@ -207,7 +208,8 @@ class TestUpgradesSuite(unittest.TestCase):
         self.assertTrue(data["isFallback"])
         self.assertNotIn("unverified answer", data["answer"].lower())
         self.assertNotIn("fallback answer", data["answer"].lower())
-        self.assertIn("verified", data["answer"].lower())
+        self.assertNotIn("knowledge base", data["answer"].lower())
+        self.assertTrue(len(data["answer"]) > 20)
 
     def test_a14_ambiguous_query_asks_clarifying_question(self) -> None:
         resp = self.client.post(

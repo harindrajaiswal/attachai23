@@ -74,12 +74,19 @@ class ChatService:
         conv_id = conv["id"]
         resolved_session_id = conv["session_id"]
         conv_metadata: Dict[str, Any] = dict(conv.get("metadata") or {})
+        if conv.get("summary") and "summary" not in conv_metadata:
+            conv_metadata["summary"] = conv.get("summary")
+        conv_metadata["assistant_name"] = tenant.get("assistant_name", "AI Assistant")
+        conv_metadata["business_name"] = (
+            tenant.get("company_name") or tenant.get("business_name") or tenant.get("name") or "our organization"
+        )
 
         # Load bounded prior history BEFORE appending current user message
         prior_history = await self.conversations.get_bounded_history(tenant_id, conv_id)
 
-        # Detect language and classify input intent
-        detected_lang = detect_language(cleaned_msg)
+        # Detect language dynamically (preserving prior preferred language on language-neutral follow-ups)
+        prior_pref_lang = conv_metadata.get("preferred_language")
+        detected_lang = detect_language(cleaned_msg, prior_language=prior_pref_lang)
         intent = classify_message_intent(cleaned_msg, prior_history, conv_metadata)
 
         # Persist user message (idempotent if message_id provided on retry)
@@ -171,14 +178,26 @@ class ChatService:
 
         # 2. Handle GREETING, GENERAL_CONVERSATION, and AMBIGUOUS without unnecessary RAG search
         if intent in ("GREETING", "GENERAL_CONVERSATION", "AMBIGUOUS"):
-            reply_text = await self.llm.generate_conversational_reply(
-                intent=intent,
-                message=cleaned_msg,
-                language=detected_lang,
-                tenant=tenant,
-                conversation_history=prior_history,
-                memory_metadata=conv_metadata,
-            )
+            try:
+                reply_text = await self.llm.generate_conversational_reply(
+                    intent=intent,
+                    message=cleaned_msg,
+                    language=detected_lang,
+                    tenant=tenant,
+                    conversation_history=prior_history,
+                    memory_metadata=conv_metadata,
+                )
+            except Exception:
+                if getattr(self.llm, "_http_handler", None) is not None:
+                    raise
+                reply_text = await LocalLlmProvider().generate_conversational_reply(
+                    intent=intent,
+                    message=cleaned_msg,
+                    language=detected_lang,
+                    tenant=tenant,
+                    conversation_history=prior_history,
+                    memory_metadata=conv_metadata,
+                )
             reply_text = sanitize_customer_facing_text(reply_text)
             sup_level = (
                 SupportLevel.PARTIAL.value if intent == "AMBIGUOUS" else SupportLevel.SUPPORTED.value
@@ -232,15 +251,25 @@ class ChatService:
 
         # 3. Handle OUT_OF_SCOPE
         if intent == "OUT_OF_SCOPE":
-            if detected_lang in ("hi", "hinglish", "ur"):
-                oos_answer = await self.llm.generate_conversational_reply(
-                    intent="OUT_OF_SCOPE",
-                    message=cleaned_msg,
-                    language=detected_lang,
-                    tenant=tenant,
-                    conversation_history=prior_history,
-                    memory_metadata=conv_metadata,
-                )
+            if detected_lang != "en":
+                try:
+                    oos_answer = await self.llm.generate_conversational_reply(
+                        intent="OUT_OF_SCOPE",
+                        message=cleaned_msg,
+                        language=detected_lang,
+                        tenant=tenant,
+                        conversation_history=prior_history,
+                        memory_metadata=conv_metadata,
+                    )
+                except Exception:
+                    oos_answer = await LocalLlmProvider().generate_conversational_reply(
+                        intent="OUT_OF_SCOPE",
+                        message=cleaned_msg,
+                        language=detected_lang,
+                        tenant=tenant,
+                        conversation_history=prior_history,
+                        memory_metadata=conv_metadata,
+                    )
             else:
                 oos_answer = fallback_answer
             oos_answer = sanitize_customer_facing_text(oos_answer)
@@ -304,15 +333,25 @@ class ChatService:
         support_level = rag_result["support_level"]
 
         if support_level == SupportLevel.UNKNOWN.value or not chunks:
-            if detected_lang in ("hi", "hinglish", "ur"):
-                validated_answer = await LocalLlmProvider().generate_conversational_reply(
-                    intent="OUT_OF_SCOPE",
-                    message=cleaned_msg,
-                    language=detected_lang,
-                    tenant=tenant,
-                    conversation_history=prior_history,
-                    memory_metadata=conv_metadata,
-                )
+            if detected_lang != "en":
+                try:
+                    validated_answer = await self.llm.generate_conversational_reply(
+                        intent="OUT_OF_SCOPE",
+                        message=cleaned_msg,
+                        language=detected_lang,
+                        tenant=tenant,
+                        conversation_history=prior_history,
+                        memory_metadata=conv_metadata,
+                    )
+                except Exception:
+                    validated_answer = await LocalLlmProvider().generate_conversational_reply(
+                        intent="OUT_OF_SCOPE",
+                        message=cleaned_msg,
+                        language=detected_lang,
+                        tenant=tenant,
+                        conversation_history=prior_history,
+                        memory_metadata=conv_metadata,
+                    )
             else:
                 validated_answer = fallback_answer
             validated_answer = sanitize_customer_facing_text(validated_answer)
