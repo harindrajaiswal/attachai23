@@ -57,6 +57,26 @@ class TestSecurity(unittest.TestCase):
                 }
             )
 
+        # Optional integrations (Qdrant, SMTP, external embeddings, TTS) gracefully fall back when not configured
+        graceful = Settings(
+            env_overrides={
+                "APP_ENV": "development",
+                "DATABASE_PROVIDER": "sqlite",
+                "STORAGE_PROVIDER": "local",
+                "VECTOR_PROVIDER": "qdrant",
+                "QDRANT_URL": "",
+                "NOTIFICATION_PROVIDER": "smtp",
+                "SMTP_HOST": "",
+                "EMBEDDING_PROVIDER": "openai-compatible",
+                "EMBEDDING_API_KEY": "",
+                "TTS_API_KEY": "",
+            }
+        )
+        self.assertEqual(graceful.vector_provider, "local")
+        self.assertEqual(graceful.notification_provider, "outbox")
+        self.assertEqual(graceful.embedding_provider, "local")
+        self.assertFalse(graceful.tts_enabled)
+
     def test_rate_limiting_and_protected_metrics(self) -> None:
         env = IsolatedOrbitTestEnv(env_overrides={"PUBLIC_RATE_LIMIT_PER_MINUTE": "3"})
         try:

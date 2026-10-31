@@ -514,9 +514,32 @@ class SupabaseRepository(BaseRepository):
             body={"summary": summary},
         )
 
+    async def update_conversation_metadata(
+        self, tenant_id: str, conversation_id: str, metadata: Dict[str, Any]
+    ) -> None:
+        self._request(
+            "PATCH",
+            "/rest/v1/conversations",
+            params={"id": f"eq.{conversation_id}", "tenant_id": f"eq.{tenant_id}"},
+            body={"metadata": metadata or {}},
+        )
+
+    async def delete_conversation(self, tenant_id: str, conversation_id: str) -> bool:
+        self._request(
+            "DELETE",
+            "/rest/v1/conversations",
+            params={"id": f"eq.{conversation_id}", "tenant_id": f"eq.{tenant_id}"},
+        )
+        return True
+
     async def add_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        msg_id = data.get("id") or str(uuid.uuid4())
+        if data.get("id"):
+            existing = await self.get_message(data["tenant_id"], msg_id)
+            if existing:
+                return existing
         payload = {
-            "id": data.get("id") or str(uuid.uuid4()),
+            "id": msg_id,
             "tenant_id": data["tenant_id"],
             "conversation_id": data["conversation_id"],
             "role": data["role"],
@@ -528,6 +551,14 @@ class SupabaseRepository(BaseRepository):
         }
         rows = self._request("POST", "/rest/v1/messages", body=payload)
         return rows[0] if isinstance(rows, list) and rows else payload
+
+    async def get_message(self, tenant_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        rows = self._request(
+            "GET",
+            "/rest/v1/messages",
+            params={"id": f"eq.{message_id}", "tenant_id": f"eq.{tenant_id}", "limit": "1"},
+        )
+        return rows[0] if isinstance(rows, list) and rows else None
 
     async def list_messages(
         self, tenant_id: str, conversation_id: str, limit: int = 50
@@ -543,6 +574,95 @@ class SupabaseRepository(BaseRepository):
             },
         )
         return list(rows or [])
+
+    async def upsert_message_feedback(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        message_id: str,
+        feedback_type: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        try:
+            existing = await self.get_message_feedback(tenant_id, message_id)
+            if existing and not existing.get("_fallback_meta"):
+                rows = self._request(
+                    "PATCH",
+                    "/rest/v1/message_feedback",
+                    params={"id": f"eq.{existing['id']}", "tenant_id": f"eq.{tenant_id}"},
+                    body={"feedback_type": feedback_type, "reason": reason},
+                )
+                rec = rows[0] if isinstance(rows, list) and rows else {**existing, "feedback_type": feedback_type, "reason": reason}
+                return {**rec, "updated": True}
+
+            payload = {
+                "id": str(uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "feedback_type": feedback_type,
+                "reason": reason,
+            }
+            rows = self._request("POST", "/rest/v1/message_feedback", body=payload)
+            rec = rows[0] if isinstance(rows, list) and rows else payload
+            return {**rec, "updated": False}
+        except Exception:
+            if self._http_handler is not None:
+                raise
+            conv = await self.get_conversation(tenant_id, conversation_id)
+            meta = dict((conv or {}).get("metadata") or {})
+            fb_map = dict(meta.get("_message_feedback") or {})
+            prev = fb_map.get(message_id)
+            fb_record = {
+                "id": (prev or {}).get("id") or str(uuid.uuid4()),
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "feedback_type": feedback_type,
+                "reason": reason,
+                "updated": bool(prev),
+            }
+            fb_map[message_id] = fb_record
+            meta["_message_feedback"] = fb_map
+            await self.update_conversation_metadata(tenant_id, conversation_id, meta)
+            return fb_record
+
+    async def get_message_feedback(
+        self, tenant_id: str, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            rows = self._request(
+                "GET",
+                "/rest/v1/message_feedback",
+                params={"tenant_id": f"eq.{tenant_id}", "message_id": f"eq.{message_id}", "limit": "1"},
+            )
+            return rows[0] if isinstance(rows, list) and rows else None
+        except Exception:
+            if self._http_handler is not None:
+                raise
+            return None
+
+    async def list_conversation_feedback(
+        self, tenant_id: str, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        try:
+            rows = self._request(
+                "GET",
+                "/rest/v1/message_feedback",
+                params={
+                    "tenant_id": f"eq.{tenant_id}",
+                    "conversation_id": f"eq.{conversation_id}",
+                    "order": "created_at.asc",
+                },
+            )
+            return list(rows or [])
+        except Exception:
+            if self._http_handler is not None:
+                raise
+            conv = await self.get_conversation(tenant_id, conversation_id)
+            meta = dict((conv or {}).get("metadata") or {})
+            fb_map = dict(meta.get("_message_feedback") or {})
+            return list(fb_map.values())
 
     async def upsert_lead_idempotent(self, data: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
         tenant_id = data["tenant_id"]

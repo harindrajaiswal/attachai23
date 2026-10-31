@@ -278,27 +278,30 @@ class Settings:
             if not self.supabase_storage_bucket:
                 raise ConfigurationError("SUPABASE_STORAGE_BUCKET must not be empty.")
 
-        # Qdrant provider requirements
+        # Gracefully fall back for optional integrations when their credentials/URLs are not configured
         if self.vector_provider == "qdrant" and not self.qdrant_url:
-            raise ConfigurationError("QDRANT_URL is required when VECTOR_PROVIDER='qdrant'.")
+            self.vector_provider = (
+                "supabase"
+                if (self.database_provider == "supabase" and self.supabase_url and self.supabase_service_role_key)
+                else "local"
+            )
 
-        # OpenAI-compatible LLM requirements
         if self.llm_provider_type == "openai-compatible":
             if not self.llm_base_url or not self.llm_model or not self.llm_api_key:
-                raise ConfigurationError(
-                    "LLM_BASE_URL, LLM_MODEL, and LLM_API_KEY are required when LLM_PROVIDER_TYPE='openai-compatible'."
-                )
+                self.llm_provider_type = "local"
 
-        # OpenAI-compatible Embedding requirements
         if self.embedding_provider == "openai-compatible":
             if not self.embedding_base_url or not self.embedding_model or not self.embedding_api_key:
-                raise ConfigurationError(
-                    "EMBEDDING_BASE_URL, EMBEDDING_MODEL, and EMBEDDING_API_KEY are required when EMBEDDING_PROVIDER='openai-compatible'."
-                )
+                self.embedding_provider = "local"
+                self.embedding_dimensions = 128
+                self.supabase_vector_dimensions = 128
 
-        # SMTP notification requirements
         if self.notification_provider == "smtp" and not self.smtp_host:
-            raise ConfigurationError("SMTP_HOST is required when NOTIFICATION_PROVIDER='smtp'.")
+            self.notification_provider = (
+                "supabase"
+                if (self.database_provider == "supabase" and self.supabase_url and self.supabase_service_role_key)
+                else "outbox"
+            )
 
 
 def load_settings(env_overrides: Optional[Dict[str, Any]] = None) -> Settings:

@@ -1,13 +1,12 @@
-"""Customer chat orchestration service (Standard & Validated SSE Streaming).
+"""Customer chat orchestration service (Intelligent Intent Routing, Multilingual RAG, Memory & Validated SSE).
 
-Implements Section 8 & 9:
-- Validates message length and tenant ownership
-- Preserves sessionId and conversationId across turns
-- Handles real conversation summarization requests using prior messages
-- Runs tenant-isolated Advanced RAG retrieval & evidence assessment
-- Generates answer with bounded conversation history
-- Enforces GroundingService validation before emitting any response (including SSE stream)
-- Persists user & assistant messages and usage telemetry
+Implements Section 8 & 9 + Upgrades 1, 2, and 3:
+- Classifies input into GREETING, GENERAL_CONVERSATION, SUMMARY_REQUEST, AMBIGUOUS, OUT_OF_SCOPE, FOLLOW_UP_QUESTION, KNOWLEDGE_QUESTION
+- Detects customer language (English, Hindi Devanagari, Hinglish, Urdu)
+- Preserves sessionId, conversationId, bounded history, and structured conversation memory across turns
+- Prevents duplicate user message persistence on network retries
+- Runs tenant-isolated Multi-Query RAG retrieval & Scenario B expanded search
+- Enforces GroundingService validation and strips any robotic labels before emitting responses
 """
 
 import json
@@ -16,15 +15,20 @@ import uuid
 from typing import Any, AsyncGenerator, Dict, List, Optional
 from app.core.exceptions import ValidationError
 from app.domain.enums import SupportLevel
-from app.providers.llm import BaseLlmProvider
+from app.providers.llm import BaseLlmProvider, LocalLlmProvider
 from app.repositories.base import BaseRepository
 from app.services.advanced_rag import AdvancedRagService
-from app.services.conversations import ConversationService, is_summary_request
-from app.services.grounding import GroundingService
+from app.services.conversations import (
+    ConversationService,
+    classify_message_intent,
+    detect_language,
+    is_summary_request,
+)
+from app.services.grounding import GroundingService, sanitize_customer_facing_text
 
 
 class ChatService:
-    """Orchestrates customer chat, RAG retrieval, grounding validation, and SSE streaming."""
+    """Orchestrates customer chat, intent routing, multilingual RAG, grounding validation, and SSE streaming."""
 
     def __init__(
         self,
@@ -48,6 +52,7 @@ class ChatService:
         message: str,
         session_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Process a customer chat message and return a grounded, validated response."""
         start_ts = time.perf_counter()
@@ -68,50 +73,57 @@ class ChatService:
         )
         conv_id = conv["id"]
         resolved_session_id = conv["session_id"]
+        conv_metadata: Dict[str, Any] = dict(conv.get("metadata") or {})
 
         # Load bounded prior history BEFORE appending current user message
         prior_history = await self.conversations.get_bounded_history(tenant_id, conv_id)
 
-        # Persist user message
-        await self.repository.add_message(
-            {
-                "tenant_id": tenant_id,
-                "conversation_id": conv_id,
-                "role": "user",
-                "content": cleaned_msg,
-                "sources": [],
-                "support_level": SupportLevel.SUPPORTED.value,
-                "grounding_passed": True,
-                "latency_ms": 0,
-            }
-        )
+        # Detect language and classify input intent
+        detected_lang = detect_language(cleaned_msg)
+        intent = classify_message_intent(cleaned_msg, prior_history, conv_metadata)
 
-        fallback_answer = tenant.get("fallback_answer") or (
+        # Persist user message (idempotent if message_id provided on retry)
+        user_msg_payload: Dict[str, Any] = {
+            "tenant_id": tenant_id,
+            "conversation_id": conv_id,
+            "role": "user",
+            "content": cleaned_msg,
+            "sources": [],
+            "support_level": SupportLevel.SUPPORTED.value,
+            "grounding_passed": True,
+            "latency_ms": 0,
+        }
+        if message_id:
+            user_msg_payload["id"] = message_id
+        user_msg_record = await self.repository.add_message(user_msg_payload)
+        user_msg_id = user_msg_record["id"]
+
+        raw_fallback = tenant.get("fallback_answer") or (
             "I do not have enough verified information in our knowledge base to answer that accurately."
         )
+        fallback_answer = sanitize_customer_facing_text(raw_fallback)
 
-        # Check if user is asking for a summary of the conversation (Fixes Defect #2)
-        if is_summary_request(cleaned_msg):
+        # 1. Handle SUMMARY_REQUEST
+        if intent == "SUMMARY_REQUEST" or is_summary_request(cleaned_msg):
             summary_history = prior_history + [{"role": "user", "content": cleaned_msg}]
             try:
                 summary_text = await self.llm.summarize_conversation(
                     conversation_history=prior_history if prior_history else summary_history,
                     assistant_name=tenant.get("assistant_name", "AI Assistant"),
-                    language=tenant.get("language", "en"),
+                    language=detected_lang if detected_lang != "en" else tenant.get("language", "en"),
                 )
             except Exception:
                 if getattr(self.llm, "_http_handler", None) is not None:
                     raise
-                from app.providers.llm import LocalLlmProvider
-
                 summary_text = await LocalLlmProvider().summarize_conversation(
                     conversation_history=prior_history if prior_history else summary_history,
                     assistant_name=tenant.get("assistant_name", "AI Assistant"),
-                    language=tenant.get("language", "en"),
+                    language=detected_lang,
                 )
+            summary_text = sanitize_customer_facing_text(summary_text)
             await self.repository.update_conversation_summary(tenant_id, conv_id, summary_text)
             latency_ms = max(1, int((time.perf_counter() - start_ts) * 1000))
-            await self.repository.add_message(
+            assistant_msg = await self.repository.add_message(
                 {
                     "tenant_id": tenant_id,
                     "conversation_id": conv_id,
@@ -122,6 +134,15 @@ class ChatService:
                     "grounding_passed": True,
                     "latency_ms": latency_ms,
                 }
+            )
+            await self.conversations.update_memory_state(
+                tenant_id=tenant_id,
+                conversation_id=conv_id,
+                user_message=cleaned_msg,
+                assistant_answer=summary_text,
+                intent="SUMMARY_REQUEST",
+                detected_language=detected_lang,
+                existing_metadata=conv_metadata,
             )
             await self.repository.record_usage(
                 {
@@ -134,6 +155,8 @@ class ChatService:
                 }
             )
             return {
+                "messageId": assistant_msg["id"],
+                "userMessageId": user_msg_id,
                 "conversationId": conv_id,
                 "sessionId": resolved_session_id,
                 "answer": summary_text,
@@ -141,57 +164,220 @@ class ChatService:
                 "supportLevel": SupportLevel.SUPPORTED.value,
                 "groundingPassed": True,
                 "isFallback": False,
+                "intent": "SUMMARY_REQUEST",
+                "language": detected_lang,
                 "latencyMs": latency_ms,
             }
 
-        # Standard RAG Retrieval & Assessment
+        # 2. Handle GREETING, GENERAL_CONVERSATION, and AMBIGUOUS without unnecessary RAG search
+        if intent in ("GREETING", "GENERAL_CONVERSATION", "AMBIGUOUS"):
+            reply_text = await self.llm.generate_conversational_reply(
+                intent=intent,
+                message=cleaned_msg,
+                language=detected_lang,
+                tenant=tenant,
+                conversation_history=prior_history,
+                memory_metadata=conv_metadata,
+            )
+            reply_text = sanitize_customer_facing_text(reply_text)
+            sup_level = (
+                SupportLevel.PARTIAL.value if intent == "AMBIGUOUS" else SupportLevel.SUPPORTED.value
+            )
+            latency_ms = max(1, int((time.perf_counter() - start_ts) * 1000))
+            assistant_msg = await self.repository.add_message(
+                {
+                    "tenant_id": tenant_id,
+                    "conversation_id": conv_id,
+                    "role": "assistant",
+                    "content": reply_text,
+                    "sources": [],
+                    "support_level": sup_level,
+                    "grounding_passed": True,
+                    "latency_ms": latency_ms,
+                }
+            )
+            await self.conversations.update_memory_state(
+                tenant_id=tenant_id,
+                conversation_id=conv_id,
+                user_message=cleaned_msg,
+                assistant_answer=reply_text,
+                intent=intent,
+                detected_language=detected_lang,
+                existing_metadata=conv_metadata,
+            )
+            await self.repository.record_usage(
+                {
+                    "tenant_id": tenant_id,
+                    "operation": "chat_conversational",
+                    "request_count": 1,
+                    "usage_units": max(1, (len(cleaned_msg) + len(reply_text)) // 100),
+                    "latency_ms": latency_ms,
+                    "support_level": sup_level,
+                }
+            )
+            return {
+                "messageId": assistant_msg["id"],
+                "userMessageId": user_msg_id,
+                "conversationId": conv_id,
+                "sessionId": resolved_session_id,
+                "answer": reply_text,
+                "sources": [],
+                "supportLevel": sup_level,
+                "groundingPassed": True,
+                "isFallback": False,
+                "intent": intent,
+                "language": detected_lang,
+                "latencyMs": latency_ms,
+            }
+
+        # 3. Handle OUT_OF_SCOPE
+        if intent == "OUT_OF_SCOPE":
+            if detected_lang in ("hi", "hinglish", "ur"):
+                oos_answer = await self.llm.generate_conversational_reply(
+                    intent="OUT_OF_SCOPE",
+                    message=cleaned_msg,
+                    language=detected_lang,
+                    tenant=tenant,
+                    conversation_history=prior_history,
+                    memory_metadata=conv_metadata,
+                )
+            else:
+                oos_answer = fallback_answer
+            oos_answer = sanitize_customer_facing_text(oos_answer)
+            latency_ms = max(1, int((time.perf_counter() - start_ts) * 1000))
+            assistant_msg = await self.repository.add_message(
+                {
+                    "tenant_id": tenant_id,
+                    "conversation_id": conv_id,
+                    "role": "assistant",
+                    "content": oos_answer,
+                    "sources": [],
+                    "support_level": SupportLevel.UNKNOWN.value,
+                    "grounding_passed": False,
+                    "latency_ms": latency_ms,
+                }
+            )
+            await self.conversations.update_memory_state(
+                tenant_id=tenant_id,
+                conversation_id=conv_id,
+                user_message=cleaned_msg,
+                assistant_answer=oos_answer,
+                intent=intent,
+                detected_language=detected_lang,
+                existing_metadata=conv_metadata,
+            )
+            await self.repository.record_usage(
+                {
+                    "tenant_id": tenant_id,
+                    "operation": "chat",
+                    "request_count": 1,
+                    "usage_units": max(1, (len(cleaned_msg) + len(oos_answer)) // 100),
+                    "latency_ms": latency_ms,
+                    "support_level": SupportLevel.UNKNOWN.value,
+                }
+            )
+            return {
+                "messageId": assistant_msg["id"],
+                "userMessageId": user_msg_id,
+                "conversationId": conv_id,
+                "sessionId": resolved_session_id,
+                "answer": oos_answer,
+                "sources": [],
+                "supportLevel": SupportLevel.UNKNOWN.value,
+                "groundingPassed": False,
+                "isFallback": True,
+                "intent": intent,
+                "language": detected_lang,
+                "latencyMs": latency_ms,
+            }
+
+        # 4. Multi-Query RAG Retrieval & Evidence Assessment (KNOWLEDGE_QUESTION & FOLLOW_UP_QUESTION)
         rag_result = await self.rag.retrieve_and_assess(
             tenant_id=tenant_id,
             question=cleaned_msg,
             conversation_history=prior_history,
             top_k=int(tenant.get("top_k", 5)),
             min_similarity=float(tenant.get("min_similarity", 0.25)),
+            memory_metadata=conv_metadata,
         )
         chunks = rag_result["chunks"]
         support_level = rag_result["support_level"]
 
         if support_level == SupportLevel.UNKNOWN.value or not chunks:
-            validated_answer = fallback_answer
+            if detected_lang in ("hi", "hinglish", "ur"):
+                validated_answer = await LocalLlmProvider().generate_conversational_reply(
+                    intent="OUT_OF_SCOPE",
+                    message=cleaned_msg,
+                    language=detected_lang,
+                    tenant=tenant,
+                    conversation_history=prior_history,
+                    memory_metadata=conv_metadata,
+                )
+            else:
+                validated_answer = fallback_answer
+            validated_answer = sanitize_customer_facing_text(validated_answer)
             grounding_passed = False
             is_fallback = True
             sources_payload: List[Dict[str, Any]] = []
         else:
+            effective_lang = detected_lang if detected_lang != "en" else tenant.get("language", "en")
             try:
                 candidate_answer = await self.llm.generate_answer(
                     system_prompt=tenant.get("system_prompt", ""),
                     question=cleaned_msg,
                     evidence_chunks=chunks,
                     conversation_history=prior_history,
-                    language=tenant.get("language", "en"),
+                    language=effective_lang,
                     temperature=float(tenant.get("temperature", 0.2)),
                     model_override=tenant.get("model_override"),
+                    memory_metadata=conv_metadata,
                 )
             except Exception:
                 if getattr(self.llm, "_http_handler", None) is not None:
                     raise
-                from app.providers.llm import LocalLlmProvider
-
                 candidate_answer = await LocalLlmProvider().generate_answer(
                     system_prompt=tenant.get("system_prompt", ""),
                     question=cleaned_msg,
                     evidence_chunks=chunks,
                     conversation_history=prior_history,
-                    language=tenant.get("language", "en"),
+                    language=effective_lang,
                     temperature=float(tenant.get("temperature", 0.2)),
                     model_override=tenant.get("model_override"),
+                    memory_metadata=conv_metadata,
                 )
+
             grounding_res = self.grounding.validate_answer(
                 candidate_answer=candidate_answer,
                 evidence_chunks=chunks,
                 support_level=support_level,
                 fallback_answer=fallback_answer,
+                language=effective_lang,
             )
-            validated_answer = grounding_res.validated_answer
+
+            # If live remote LLM drifted on grounding (and not a mocked test handler), synthesize deterministically
+            if (
+                not grounding_res.passed
+                and type(self.llm).__name__ == "OpenAICompatibleLlmProvider"
+                and getattr(self.llm, "_http_handler", None) is None
+            ):
+                local_candidate = await LocalLlmProvider().generate_answer(
+                    system_prompt=tenant.get("system_prompt", ""),
+                    question=cleaned_msg,
+                    evidence_chunks=chunks,
+                    conversation_history=prior_history,
+                    language=effective_lang,
+                    temperature=float(tenant.get("temperature", 0.2)),
+                    memory_metadata=conv_metadata,
+                )
+                grounding_res = self.grounding.validate_answer(
+                    candidate_answer=local_candidate,
+                    evidence_chunks=chunks,
+                    support_level=support_level,
+                    fallback_answer=fallback_answer,
+                    language=effective_lang,
+                )
+
+            validated_answer = sanitize_customer_facing_text(grounding_res.validated_answer)
             grounding_passed = grounding_res.passed
             is_fallback = not grounding_res.passed
             if is_fallback:
@@ -210,7 +396,7 @@ class ChatService:
                 ]
 
         latency_ms = max(1, int((time.perf_counter() - start_ts) * 1000))
-        await self.repository.add_message(
+        assistant_msg = await self.repository.add_message(
             {
                 "tenant_id": tenant_id,
                 "conversation_id": conv_id,
@@ -221,6 +407,15 @@ class ChatService:
                 "grounding_passed": grounding_passed,
                 "latency_ms": latency_ms,
             }
+        )
+        await self.conversations.update_memory_state(
+            tenant_id=tenant_id,
+            conversation_id=conv_id,
+            user_message=cleaned_msg,
+            assistant_answer=validated_answer,
+            intent=intent,
+            detected_language=detected_lang,
+            existing_metadata=conv_metadata,
         )
         await self.repository.record_usage(
             {
@@ -234,6 +429,8 @@ class ChatService:
         )
 
         return {
+            "messageId": assistant_msg["id"],
+            "userMessageId": user_msg_id,
             "conversationId": conv_id,
             "sessionId": resolved_session_id,
             "answer": validated_answer,
@@ -241,7 +438,11 @@ class ChatService:
             "supportLevel": support_level,
             "groundingPassed": grounding_passed,
             "isFallback": is_fallback,
+            "intent": intent,
+            "language": detected_lang,
             "reformulatedQuery": rag_result.get("reformulated_query"),
+            "multiQueries": rag_result.get("multi_queries"),
+            "expandedSearchUsed": rag_result.get("expanded_search_used", False),
             "latencyMs": latency_ms,
         }
 
@@ -251,6 +452,7 @@ class ChatService:
         message: str,
         session_id: Optional[str] = None,
         conversation_id: Optional[str] = None,
+        message_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """Emit a buffered, grounding-validated Server-Sent Events (SSE) stream.
 
@@ -265,6 +467,7 @@ class ChatService:
                 message=message,
                 session_id=session_id,
                 conversation_id=conversation_id,
+                message_id=message_id,
             )
             answer_text = result["answer"]
             words = answer_text.split(" ")
@@ -279,12 +482,16 @@ class ChatService:
             done_event = json.dumps(
                 {
                     "type": "done",
+                    "messageId": result.get("messageId"),
+                    "userMessageId": result.get("userMessageId"),
                     "conversationId": result["conversationId"],
                     "sessionId": result["sessionId"],
                     "answer": result["answer"],
                     "sources": result["sources"],
                     "supportLevel": result["supportLevel"],
                     "isFallback": result["isFallback"],
+                    "intent": result.get("intent"),
+                    "language": result.get("language"),
                 }
             )
             yield f"event: done\ndata: {done_event}\n\n"

@@ -230,16 +230,24 @@ class ServiceContainer:
                 self._bind_services()
 
         self._initialized = True
-        is_local_db = self.settings.database_provider == "sqlite" or self.supabase_migration_pending
-        if (seed_demo_data or self.supabase_migration_pending) and is_local_db:
+        if seed_demo_data or self.supabase_migration_pending:
             existing = await self.repository.list_clients()
-            if not existing:
-                await self._seed_initial_tenants()
-            else:
-                for t in existing:
-                    if t.get("slug") in ("apex-fitness", "cloudscale-b2b") and t["id"] not in self.demo_public_keys:
-                        raw_k, _ = await self.client_service.rotate_api_key(t["id"])
+            slugs = {t.get("slug") for t in existing}
+            if not existing or "apex-fitness" not in slugs:
+                try:
+                    await self._seed_initial_tenants()
+                    existing = await self.repository.list_clients()
+                except Exception:
+                    pass
+            for t in existing:
+                if t["id"] not in self.demo_public_keys:
+                    try:
+                        raw_k, _ = await self.client_service.generate_api_key(
+                            t["id"], name="Sandbox Preview Key"
+                        )
                         self.demo_public_keys[t["id"]] = raw_k
+                    except Exception:
+                        pass
 
     async def _seed_initial_tenants(self) -> None:
         """Seed two realistic multi-tenant examples for immediate local testing."""

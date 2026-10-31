@@ -16,12 +16,14 @@ class ChatRequestSchema:
         message: str,
         sessionId: Optional[str] = None,
         conversationId: Optional[str] = None,
+        messageId: Optional[str] = None,
     ) -> None:
         if not message or not str(message).strip():
             raise ValidationError("Field 'message' is required and cannot be empty.")
         self.message = str(message).strip()
         self.sessionId = str(sessionId).strip() if sessionId else None
         self.conversationId = str(conversationId).strip() if conversationId else None
+        self.messageId = str(messageId).strip() if messageId else None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ChatRequestSchema":
@@ -31,6 +33,41 @@ class ChatRequestSchema:
             message=data.get("message", ""),
             sessionId=data.get("sessionId") or data.get("session_id"),
             conversationId=data.get("conversationId") or data.get("conversation_id"),
+            messageId=data.get("messageId") or data.get("message_id"),
+        )
+
+
+class FeedbackSubmitSchema:
+    def __init__(
+        self,
+        conversationId: str,
+        messageId: str,
+        feedbackType: str,
+        reason: Optional[str] = None,
+    ) -> None:
+        conv_id = str(conversationId or "").strip()
+        msg_id = str(messageId or "").strip()
+        fb_type = str(feedbackType or "").strip().lower()
+        if not conv_id:
+            raise ValidationError("Field 'conversationId' is required.")
+        if not msg_id:
+            raise ValidationError("Field 'messageId' is required.")
+        if fb_type not in ("like", "dislike"):
+            raise ValidationError("Field 'feedbackType' must be 'like' or 'dislike'.")
+        self.conversationId = conv_id
+        self.messageId = msg_id
+        self.feedbackType = fb_type
+        self.reason = str(reason).strip()[:1000] if reason is not None and str(reason).strip() else None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "FeedbackSubmitSchema":
+        if not isinstance(data, dict):
+            raise ValidationError("Invalid JSON request body.")
+        return cls(
+            conversationId=data.get("conversationId") or data.get("conversation_id") or "",
+            messageId=data.get("messageId") or data.get("message_id") or "",
+            feedbackType=data.get("feedbackType") or data.get("feedback_type") or "",
+            reason=data.get("reason"),
         )
 
 

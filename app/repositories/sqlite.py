@@ -222,6 +222,18 @@ class SQLiteRepository(BaseRepository):
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS message_feedback (
+                id TEXT PRIMARY KEY,
+                tenant_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+                conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+                feedback_type TEXT NOT NULL CHECK (feedback_type IN ('like', 'dislike')),
+                reason TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(tenant_id, message_id)
+            );
             """
         )
         self._conn.commit()
@@ -744,6 +756,18 @@ class SQLiteRepository(BaseRepository):
             results.append(d)
         return results
 
+    def _deserialize_conversation(self, row: sqlite3.Row) -> Dict[str, Any]:
+        d = dict(row)
+        raw_meta = d.get("metadata")
+        if isinstance(raw_meta, str):
+            try:
+                d["metadata"] = json.loads(raw_meta)
+            except Exception:
+                d["metadata"] = {}
+        elif not isinstance(raw_meta, dict):
+            d["metadata"] = {}
+        return d
+
     # --- Conversations & Messages ---
     async def get_or_create_conversation(
         self, tenant_id: str, session_id: str, conversation_id: Optional[str] = None
@@ -755,15 +779,15 @@ class SQLiteRepository(BaseRepository):
             )
             row = cur.fetchone()
             if row:
-                return dict(row)
+                return self._deserialize_conversation(row)
         # Check by session_id for the same tenant
         cur = self._conn.execute(
-            "SELECT * FROM conversations WHERE tenant_id = ? AND session_id = ? ORDER BY created_at DESC LIMIT 1",
+            "SELECT * FROM conversations WHERE tenant_id = ? AND session_id = ? AND status != 'deleted' ORDER BY created_at DESC LIMIT 1",
             (tenant_id, session_id),
         )
         row = cur.fetchone()
         if row:
-            return dict(row)
+            return self._deserialize_conversation(row)
 
         conv_id = str(uuid.uuid4())
         now = utc_now_iso()
@@ -788,17 +812,17 @@ class SQLiteRepository(BaseRepository):
 
     async def get_conversation(self, tenant_id: str, conversation_id: str) -> Optional[Dict[str, Any]]:
         cur = self._conn.execute(
-            "SELECT * FROM conversations WHERE id = ? AND tenant_id = ?",
+            "SELECT * FROM conversations WHERE id = ? AND tenant_id = ? AND status != 'deleted'",
             (conversation_id, tenant_id),
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        return self._deserialize_conversation(row) if row else None
 
     async def list_conversations(
         self, tenant_id: Optional[str] = None, search: str = "", limit: int = 50, offset: int = 0
     ) -> List[Dict[str, Any]]:
         params: List[Any] = []
-        where_clauses: List[str] = []
+        where_clauses: List[str] = ["c.status != 'deleted'"]
         if tenant_id:
             where_clauses.append("c.tenant_id = ?")
             params.append(tenant_id)
@@ -825,7 +849,7 @@ class SQLiteRepository(BaseRepository):
             """,
             tuple(params),
         )
-        return [dict(r) for r in cur.fetchall()]
+        return [self._deserialize_conversation(r) for r in cur.fetchall()]
 
     async def update_conversation_summary(self, tenant_id: str, conversation_id: str, summary: str) -> None:
         self._conn.execute(
@@ -834,8 +858,31 @@ class SQLiteRepository(BaseRepository):
         )
         self._conn.commit()
 
+    async def update_conversation_metadata(
+        self, tenant_id: str, conversation_id: str, metadata: Dict[str, Any]
+    ) -> None:
+        self._conn.execute(
+            "UPDATE conversations SET metadata = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+            (json.dumps(metadata or {}), utc_now_iso(), conversation_id, tenant_id),
+        )
+        self._conn.commit()
+
+    async def delete_conversation(self, tenant_id: str, conversation_id: str) -> bool:
+        cur = self._conn.execute(
+            "DELETE FROM conversations WHERE id = ? AND tenant_id = ?",
+            (conversation_id, tenant_id),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
     async def add_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         msg_id = data.get("id") or str(uuid.uuid4())
+        # Prevent duplicate message insertion on retry if explicit message ID already exists
+        if data.get("id"):
+            existing = await self.get_message(data["tenant_id"], msg_id)
+            if existing:
+                return existing
+
         now = utc_now_iso()
         sources_json = json.dumps(data.get("sources") or [])
         self._conn.execute(
@@ -876,6 +923,23 @@ class SQLiteRepository(BaseRepository):
             "created_at": now,
         }
 
+    async def get_message(self, tenant_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        cur = self._conn.execute(
+            "SELECT * FROM messages WHERE id = ? AND tenant_id = ?",
+            (message_id, tenant_id),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["grounding_passed"] = bool(d["grounding_passed"])
+        if isinstance(d.get("sources"), str):
+            try:
+                d["sources"] = json.loads(d["sources"])
+            except Exception:
+                d["sources"] = []
+        return d
+
     async def list_messages(
         self, tenant_id: str, conversation_id: str, limit: int = 50
     ) -> List[Dict[str, Any]]:
@@ -899,6 +963,85 @@ class SQLiteRepository(BaseRepository):
                     d["sources"] = []
             rows.append(d)
         return rows
+
+    # --- Message Feedback ---
+    async def upsert_message_feedback(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        message_id: str,
+        feedback_type: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        now = utc_now_iso()
+        cur = self._conn.execute(
+            "SELECT * FROM message_feedback WHERE tenant_id = ? AND message_id = ?",
+            (tenant_id, message_id),
+        )
+        existing = cur.fetchone()
+        if existing:
+            fb_id = existing["id"]
+            self._conn.execute(
+                """
+                UPDATE message_feedback
+                SET feedback_type = ?, reason = ?, updated_at = ?
+                WHERE id = ? AND tenant_id = ?
+                """,
+                (feedback_type, reason, now, fb_id, tenant_id),
+            )
+            self._conn.commit()
+            return {
+                "id": fb_id,
+                "tenant_id": tenant_id,
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "feedback_type": feedback_type,
+                "reason": reason,
+                "created_at": existing["created_at"],
+                "updated_at": now,
+                "updated": True,
+            }
+
+        fb_id = str(uuid.uuid4())
+        self._conn.execute(
+            """
+            INSERT INTO message_feedback (
+                id, tenant_id, conversation_id, message_id, feedback_type, reason, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (fb_id, tenant_id, conversation_id, message_id, feedback_type, reason, now, now),
+        )
+        self._conn.commit()
+        return {
+            "id": fb_id,
+            "tenant_id": tenant_id,
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "feedback_type": feedback_type,
+            "reason": reason,
+            "created_at": now,
+            "updated_at": now,
+            "updated": False,
+        }
+
+    async def get_message_feedback(
+        self, tenant_id: str, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        cur = self._conn.execute(
+            "SELECT * FROM message_feedback WHERE tenant_id = ? AND message_id = ?",
+            (tenant_id, message_id),
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    async def list_conversation_feedback(
+        self, tenant_id: str, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        cur = self._conn.execute(
+            "SELECT * FROM message_feedback WHERE tenant_id = ? AND conversation_id = ? ORDER BY created_at ASC",
+            (tenant_id, conversation_id),
+        )
+        return [dict(r) for r in cur.fetchall()]
 
     # --- Leads & Lead Workflow ---
     async def upsert_lead_idempotent(self, data: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:

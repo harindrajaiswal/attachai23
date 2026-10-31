@@ -1,0 +1,179 @@
+================================================================================
+ORBIT AI — UPGRADE PACKAGE CHANGE MANIFEST (CHANGES.txt)
+================================================================================
+
+This archive contains ONLY the newly added and modified files required to apply
+the three requested upgrades to an existing Orbit AI codebase:
+
+  1. Upgrade 1: Advanced Intelligent Response Engine with Multilingual Multi-Query RAG
+  2. Upgrade 2: Persistent Conversation Memory & Multi-Turn Context Resolution
+  3. Upgrade 3: Premium Dynamic Chat Widget UI & Assistant Message Action Toolbar
+     (Like, Dislike with optional reason, Copy, Share + Database Persistence)
+
+All file paths in this archive preserve the exact original repository directory
+structure so you can extract it directly over your project root:
+
+  unzip -o orbit-ai-upgraded-files.zip -d /path/to/your/orbit-ai
+
+================================================================================
+1. NEWLY ADDED FILES (3 files)
+================================================================================
+
+[ADDED] CHANGES.txt
+  - This manifest documenting all newly added and modified files, database
+    migration steps, and upgrade summaries.
+
+[ADDED] supabase/migrations/0002_message_feedback.sql
+  - Idempotent PostgreSQL / Supabase SQL migration creating the
+    `public.message_feedback` table with `UNIQUE (tenant_id, message_id)`,
+    foreign keys to `tenants`, `conversations`, and `messages`, indexes on
+    `(tenant_id, created_at DESC)`, `(conversation_id)`, and `(message_id)`,
+    automatic `updated_at` trigger, and Row-Level Security (RLS) policy.
+
+[ADDED] tests/test_upgrades.py
+  - Automated unit and integration test suite (37 new tests) covering:
+    * Category A (18 tests): Intelligent intent routing (GREETING,
+      GENERAL_CONVERSATION, SUMMARY_REQUEST, AMBIGUOUS, OUT_OF_SCOPE,
+      KNOWLEDGE_QUESTION, FOLLOW_UP_QUESTION), Hindi/Hinglish/Urdu/English
+      multilingual RAG against English documents, synonym expansion, RRF
+      multi-query deduplication, Scenario B expanded search, strict grounding,
+      and removal of customer-facing "Unverified Answer" / internal status labels.
+    * Category B (10 tests): Multi-turn conversation memory, English & Hinglish
+      pronoun/entity resolution, rolling conversation summaries, conversation
+      reset/deletion, cross-tenant memory isolation, and retry messageId
+      idempotency.
+    * Category C (9 tests): Assistant message feedback persistence (Like,
+      Dislike with/without reason, in-place toggle update without duplicates),
+      feedback restoration on message reload, cross-tenant & role validation,
+      and widget UI / CSS capabilities.
+
+================================================================================
+2. MODIFIED FILES (16 files)
+================================================================================
+
+[MODIFIED] app/api/public.py
+  - Added `POST /v1/feedback` endpoint to record or update `like`/`dislike`
+    feedback (and optional `reason`) for completed assistant messages.
+  - Added `GET /v1/conversations/{conversation_id}/messages` endpoint returning
+    tenant-scoped conversation history enriched with persisted message feedback.
+  - Added `DELETE /v1/conversations/{conversation_id}` endpoint allowing the
+    widget to clear/reset a tenant-scoped conversation cleanly.
+  - Updated `/v1/chat` and `/v1/chat/stream` SSE event payloads (`meta` and
+    `done`) to include `messageId`, `userMessageId`, `intent`, `language`, and
+    `expandedSearchUsed` while stripping internal status labels from customer
+    text.
+
+[MODIFIED] app/api/schemas.py
+  - Added `validate_feedback_request` for validating `POST /v1/feedback`
+    requests (`conversationId`, `messageId`, `sessionId`, `feedbackType` in
+    `{'like', 'dislike'}`, and optional `reason`).
+  - Updated `validate_chat_request` to accept optional client-supplied
+    `messageId` for idempotent retry handling without duplicating user turns.
+
+[MODIFIED] app/core/config.py
+  - Updated `Settings.validate()` so optional integrations (`QDRANT_URL`,
+    `SMTP_HOST`, external `EMBEDDING_API_KEY`, external `LLM_API_KEY`, and
+    `TTS_*`) gracefully fall back to sensible defaults (`supabase` / `local` /
+    `outbox`) when unconfigured instead of requiring extra environment variables.
+
+[MODIFIED] app/core/dependencies.py
+  - Enabled `diagnostics_enabled=True` on `AdvancedRagService` so multi-query
+    and expanded-search diagnostics remain available to the chat service.
+
+[MODIFIED] app/main.py
+  - Wired routes for `POST /v1/feedback`,
+    `GET /v1/conversations/{conversation_id}/messages`, and
+    `DELETE /v1/conversations/{conversation_id}` in the HTTP router.
+  - Added `build_upgraded_files_zip_bytes()` and download endpoint
+    `GET /orbit-ai-upgraded-files.zip` (and `/download/orbit-ai-upgraded-files.zip`)
+    to serve this delta archive directly.
+  - Ensured `/api/demo-tenants` seeds demo tenants and sandbox preview keys
+    cleanly across environments.
+
+[MODIFIED] app/providers/llm.py
+  - Added `generate_conversational_reply()` on `BaseLlmProvider`,
+    `LocalLlmProvider`, and `OpenAICompatibleLlmProvider` for natural responses
+    to greetings, general conversation, ambiguous queries, and out-of-scope
+    turns in English (`en`), Hindi (`hi`), Hinglish (`hinglish`), and Urdu (`ur`).
+  - Upgraded `generate_answer()` to support multilingual synthesis grounded in
+    English evidence chunks, conversation memory metadata (`current_topic`,
+    `entities`), primary question token weighting, and pricing sentence boosting.
+
+[MODIFIED] app/repositories/base.py
+  - Added abstract repository methods for conversation memory and feedback:
+    `update_conversation_metadata()`, `delete_conversation()`, `get_message()`,
+    `upsert_message_feedback()`, `get_message_feedback()`, and
+    `list_conversation_feedback()`.
+
+[MODIFIED] app/repositories/sqlite.py
+  - Added `message_feedback` table DDL to the local SQLite schema.
+  - Implemented `update_conversation_metadata()`, `delete_conversation()`,
+    `get_message()`, `upsert_message_feedback()`, `get_message_feedback()`, and
+    `list_conversation_feedback()`.
+  - Updated `add_message()` to prevent duplicate user messages when retrying
+    with the same `id` (`messageId`).
+
+[MODIFIED] app/repositories/supabase.py
+  - Implemented `update_conversation_metadata()`, `delete_conversation()`,
+    `get_message()`, `upsert_message_feedback()`, `get_message_feedback()`, and
+    `list_conversation_feedback()` against Supabase REST (`message_feedback`
+    table), including an automatic fallback to message `sources` metadata if
+    `0002_message_feedback.sql` has not yet been applied.
+  - Updated `add_message()` to prevent duplicate messages on client retry.
+
+[MODIFIED] app/services/advanced_rag.py
+  - Added `MULTILINGUAL_CONCEPT_MAP` and `EXTENDED_SYNONYMS` bridging Hindi
+    (Devanagari), Hinglish, and Urdu terms into English retrieval concepts.
+  - Added `translate_multilingual_tokens_to_english()`,
+    `resolve_context_and_normalize_query()`, and `generate_multi_queries()`.
+  - Upgraded `AdvancedRagService.retrieve_and_assess()` to execute parallel
+    multi-query dense vector searches + paginated lexical/phrase search,
+    Reciprocal Rank Fusion (RRF) deduplication, cross-feature reranking, and
+    Scenario B expanded secondary search (`expanded_search_used`).
+
+[MODIFIED] app/services/chat.py
+  - Integrated language detection (`en`, `hi`, `hinglish`, `ur`), 7-intent
+    classification, conversational reply generation, multi-query RAG, strict
+    grounding validation, customer-facing text sanitization, persistent
+    conversation memory updates (`update_memory_state`), and retry `messageId`
+    deduplication in both `handle_chat()` and `handle_chat_stream()`.
+
+[MODIFIED] app/services/conversations.py
+  - Added `detect_language()`, `classify_message_intent()`,
+    `extract_entities_and_topic()`, `update_memory_state()`,
+    `delete_conversation()`, and `submit_feedback()`.
+  - Updated `get_conversation_messages()` to attach persisted `feedback` state
+    to each assistant message.
+
+[MODIFIED] app/services/grounding.py
+  - Added `sanitize_customer_facing_text()` to guarantee internal status strings
+    and `"Unverified Answer"` / `"Fallback Answer"` labels never appear in
+    customer-facing text.
+  - Upgraded `GroundingService.validate_answer()` to support Hindi, Hinglish,
+    and Urdu answers grounded in English evidence chunks while strictly blocking
+    unverified numbers, prices, emails, phone numbers, and guarantees.
+
+[MODIFIED] static/css/widget.css
+  - Upgraded embeddable widget styles with Light and Dark mode support, smooth
+    entrance animations, `prefers-reduced-motion` accessibility support,
+    full-screen mobile layout (`max-width: 480px`), dynamic processing shimmer
+    indicators, safe Markdown typography, Assistant Message Action Toolbar
+    (`Like`, `Dislike`, `Copy`, `Share`), inline Dislike reason popover, clear
+    conversation confirmation bar, and toast notifications.
+
+[MODIFIED] static/js/widget.js
+  - Upgraded embeddable customer chat widget with:
+    * Contextual multi-stage processing indicators (`Understanding your question...`,
+      `Searching relevant information...`, `Preparing your answer...`)
+    * Safe Markdown formatting (bold, bullet lists, inline code, code blocks, links)
+    * Assistant Message Action Toolbar (`Like`, `Dislike` with optional reason
+      input, `Copy` with toast, `Share` via Web Share API / clipboard fallback)
+    * Conversation history and feedback restoration across page reloads
+    * Clear/reset conversation confirmation flow (`DELETE /v1/conversations/{id}`)
+    * Auto-expanding `textarea` (`Enter` to send, `Shift+Enter` for newline)
+    * Idempotent message retry button on network failure
+
+[MODIFIED] tests/test_security.py
+  - Added startup configuration test verifying that unconfigured optional
+    integrations (`QDRANT_URL`, `SMTP_HOST`, `EMBEDDING_API_KEY`, `TTS_API_KEY`)
+    gracefully fall back to sensible defaults.

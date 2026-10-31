@@ -163,15 +163,47 @@ class BaseRepository(ABC):
     async def update_conversation_summary(self, tenant_id: str, conversation_id: str, summary: str) -> None:
         pass
 
+    async def update_conversation_metadata(
+        self, tenant_id: str, conversation_id: str, metadata: Dict[str, Any]
+    ) -> None:
+        pass
+
+    async def delete_conversation(self, tenant_id: str, conversation_id: str) -> bool:
+        return False
+
     @abstractmethod
     async def add_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         pass
+
+    async def get_message(self, tenant_id: str, message_id: str) -> Optional[Dict[str, Any]]:
+        return None
 
     @abstractmethod
     async def list_messages(
         self, tenant_id: str, conversation_id: str, limit: int = 50
     ) -> List[Dict[str, Any]]:
         pass
+
+    # --- Message Feedback ---
+    async def upsert_message_feedback(
+        self,
+        tenant_id: str,
+        conversation_id: str,
+        message_id: str,
+        feedback_type: str,
+        reason: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    async def get_message_feedback(
+        self, tenant_id: str, message_id: str
+    ) -> Optional[Dict[str, Any]]:
+        return None
+
+    async def list_conversation_feedback(
+        self, tenant_id: str, conversation_id: str
+    ) -> List[Dict[str, Any]]:
+        return []
 
     # --- Leads & Lead Workflow ---
     @abstractmethod

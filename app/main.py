@@ -74,6 +74,40 @@ def build_project_zip_bytes() -> bytes:
     return buf.getvalue()
 
 
+UPGRADED_FILES_MANIFEST = (
+    "CHANGES.txt",
+    "supabase/migrations/0002_message_feedback.sql",
+    "app/api/public.py",
+    "app/api/schemas.py",
+    "app/core/config.py",
+    "app/core/dependencies.py",
+    "app/main.py",
+    "app/providers/llm.py",
+    "app/repositories/base.py",
+    "app/repositories/sqlite.py",
+    "app/repositories/supabase.py",
+    "app/services/advanced_rag.py",
+    "app/services/chat.py",
+    "app/services/conversations.py",
+    "app/services/grounding.py",
+    "static/css/widget.css",
+    "static/js/widget.js",
+    "tests/test_security.py",
+    "tests/test_upgrades.py",
+)
+
+
+def build_upgraded_files_zip_bytes() -> bytes:
+    """Create a delta zip archive containing ONLY the newly added and modified files for the 3 upgrades."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel_path in UPGRADED_FILES_MANIFEST:
+            full_path = ROOT_DIR / rel_path
+            if full_path.is_file():
+                zf.write(full_path, rel_path)
+    return buf.getvalue()
+
+
 def render_template_file(template_name: str, context: Dict[str, Any]) -> str:
     """Render a Jinja2 template from `app/templates/` (uses Jinja2 when installed, or built-in compiler)."""
     try:
@@ -303,6 +337,23 @@ class OrbitApplication:
                     media_type=mime or "application/octet-stream",
                 )
 
+            if clean_path in (
+                "/orbit-ai-upgraded-files.zip",
+                "/download/orbit-ai-upgraded-files.zip",
+                "/public/orbit-ai-upgraded-files.zip",
+            ) and method_u == "GET":
+                zip_bytes = build_upgraded_files_zip_bytes()
+                resp_headers = build_security_headers(self.container.settings.is_production)
+                resp_headers.update(cors_headers)
+                resp_headers["Content-Type"] = "application/zip"
+                resp_headers["Content-Disposition"] = 'attachment; filename="orbit-ai-upgraded-files.zip"'
+                return HttpResponseData(
+                    status_code=200,
+                    headers=resp_headers,
+                    body=zip_bytes,
+                    media_type="application/zip",
+                )
+
             if clean_path in ("/orbit-ai-full.zip", "/download/orbit-ai.zip", "/public/orbit-ai-full.zip") and method_u == "GET":
                 zip_bytes = build_project_zip_bytes()
                 resp_headers = build_security_headers(self.container.settings.is_production)
@@ -318,21 +369,43 @@ class OrbitApplication:
 
             if clean_path in ("/demo.html", "/public/demo.html") and method_u == "GET":
                 demo_file = PUBLIC_DIR / "demo.html"
-                return self._html_response(demo_file.read_text(encoding="utf-8"), extra_headers=cors_headers)
+                demo_html = demo_file.read_text(encoding="utf-8").replace(
+                    '<a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="btn btn-secondary">Download Full Project (.zip)</a>',
+                    '<a href="/orbit-ai-upgraded-files.zip" download="orbit-ai-upgraded-files.zip" class="btn btn-primary">Download Upgraded Files Only (.zip)</a>\n      <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="btn btn-secondary">Download Full Project (.zip)</a>',
+                )
+                return self._html_response(demo_html, extra_headers=cors_headers)
 
             if clean_path == "/api/demo-tenants" and method_u == "GET":
                 tenants = await self.container.client_service.list_tenants()
-                demo_list = [
-                    {
-                        "id": t["id"],
-                        "business_name": t["business_name"],
-                        "slug": t["slug"],
-                        "assistant_name": t["assistant_name"],
-                        "demo_api_key": self.container.demo_public_keys.get(t["id"], ""),
-                    }
-                    for t in tenants
-                    if t.get("enabled")
-                ]
+                slugs = {t.get("slug") for t in tenants}
+                if "apex-fitness" not in slugs:
+                    try:
+                        await self.container._seed_initial_tenants()
+                        tenants = await self.container.client_service.list_tenants()
+                    except Exception:
+                        pass
+                demo_list = []
+                for t in tenants:
+                    if not t.get("enabled"):
+                        continue
+                    tid = t["id"]
+                    if tid not in self.container.demo_public_keys:
+                        try:
+                            raw_k, _ = await self.container.client_service.generate_api_key(
+                                tid, name="Sandbox Preview Key"
+                            )
+                            self.container.demo_public_keys[tid] = raw_k
+                        except Exception:
+                            pass
+                    demo_list.append(
+                        {
+                            "id": tid,
+                            "business_name": t["business_name"],
+                            "slug": t["slug"],
+                            "assistant_name": t["assistant_name"],
+                            "demo_api_key": self.container.demo_public_keys.get(tid, ""),
+                        }
+                    )
                 return self._json_response({"tenants": demo_list}, extra_headers=cors_headers)
 
             # --- 3. ROOT & ADMIN HTML VIEWS (/, /admin, /admin/login) ---
@@ -348,7 +421,10 @@ class OrbitApplication:
                 if not csrf_token:
                     is_preview = os.environ.get("NODE_ENV") == "development" or not self.container.settings.is_production
                     dev_hint = "orbit-dev-admin-key-2026" if is_preview else ""
-                    html_login = render_template_file("login.html", {"dev_hint": dev_hint})
+                    html_login = render_template_file("login.html", {"dev_hint": dev_hint}).replace(
+                        '<a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="text-link">Download Full Project (.zip)</a>',
+                        '<a href="/orbit-ai-upgraded-files.zip" download="orbit-ai-upgraded-files.zip" class="text-link" style="font-weight:600;">Download Upgraded Files Only (.zip)</a> <span aria-hidden="true">·</span> <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="text-link">Download Full Project (.zip)</a>',
+                    )
                     return self._html_response(html_login)
 
                 html_dash = render_template_file(
@@ -357,13 +433,19 @@ class OrbitApplication:
                         "csrf_token": csrf_token,
                         "public_base_url": self.container.settings.public_base_url,
                     },
+                ).replace(
+                    '<a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="btn btn-secondary">Download Project (.zip)</a>',
+                    '<a href="/orbit-ai-upgraded-files.zip" download="orbit-ai-upgraded-files.zip" class="btn btn-primary">Download Upgraded Files Only (.zip)</a> <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="btn btn-secondary">Download Full Project (.zip)</a>',
                 )
                 return self._html_response(html_dash)
 
             if clean_path == "/admin/login" and method_u == "GET":
                 is_preview = os.environ.get("NODE_ENV") == "development" or not self.container.settings.is_production
                 dev_hint = "orbit-dev-admin-key-2026" if is_preview else ""
-                html_login = render_template_file("login.html", {"dev_hint": dev_hint})
+                html_login = render_template_file("login.html", {"dev_hint": dev_hint}).replace(
+                    '<a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="text-link">Download Full Project (.zip)</a>',
+                    '<a href="/orbit-ai-upgraded-files.zip" download="orbit-ai-upgraded-files.zip" class="text-link" style="font-weight:600;">Download Upgraded Files Only (.zip)</a> <span aria-hidden="true">·</span> <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="text-link">Download Full Project (.zip)</a>',
+                )
                 return self._html_response(html_login)
 
             # --- 4. PUBLIC WIDGET API (/v1/*) ---
@@ -426,6 +508,39 @@ class OrbitApplication:
                     client_ip=client_ip,
                 )
                 return self._json_response(lead_res, status_code=status_code, extra_headers=cors_headers)
+
+            if clean_path == "/v1/feedback" and method_u == "POST":
+                json_body = json.loads(body.decode("utf-8") or "{}") if body else {}
+                fb_res = await self.public_api.post_feedback(
+                    body=json_body,
+                    api_key=norm_headers.get("x-api-key"),
+                    origin=origin,
+                    client_id=norm_headers.get("x-client-id"),
+                    client_ip=client_ip,
+                )
+                return self._json_response(fb_res, status_code=200, extra_headers=cors_headers)
+
+            m_pub_conv_msgs = re.match(r"^/v1/conversations/([^/]+)/messages$", clean_path)
+            if m_pub_conv_msgs and method_u == "GET":
+                conv_msgs_res = await self.public_api.get_conversation_messages(
+                    conversation_id=m_pub_conv_msgs.group(1),
+                    api_key=norm_headers.get("x-api-key"),
+                    origin=origin,
+                    client_id=norm_headers.get("x-client-id"),
+                    client_ip=client_ip,
+                )
+                return self._json_response(conv_msgs_res, status_code=200, extra_headers=cors_headers)
+
+            m_pub_conv_del = re.match(r"^/v1/conversations/([^/]+)$", clean_path)
+            if m_pub_conv_del and method_u == "DELETE":
+                del_res = await self.public_api.delete_conversation(
+                    conversation_id=m_pub_conv_del.group(1),
+                    api_key=norm_headers.get("x-api-key"),
+                    origin=origin,
+                    client_id=norm_headers.get("x-client-id"),
+                    client_ip=client_ip,
+                )
+                return self._json_response(del_res, status_code=200, extra_headers=cors_headers)
 
             # --- 5. ADMIN API (/api/admin/*) ---
             if clean_path == "/api/admin/login" and method_u == "POST":
