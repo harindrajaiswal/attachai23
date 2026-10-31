@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Administrator Sign In — Orbit AI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/dashboard.css" />
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <div class="login-card">
+      <div class="login-header">
+        <div class="brand-mark">Orbit AI</div>
+        <h1 class="login-title">Administrator Control Plane</h1>
+        <p class="login-subtitle">Authenticate with your server-configured <code>ADMIN_API_KEY</code> to manage tenants, RAG knowledge indexes, conversations, and captured leads.</p>
+      </div>
+
+      <form id="admin-login-form" class="login-form" autocomplete="off">
+        <div class="form-group">
+          <label for="admin-api-key-input" class="form-label">Administrator Access Key</label>
+          <input
+            type="password"
+            id="admin-api-key-input"
+            name="admin_api_key"
+            class="form-input font-mono"
+            placeholder="Enter ADMIN_API_KEY..."
+            required
+            aria-label="Administrator Access Key"
+          />
+          {% if dev_hint %}
+          <p class="form-help">Local development default key: <code class="font-mono">{{ dev_hint }}</code></p>
+          {% endif %}
+        </div>
+
+        <div id="login-error-box" class="alert alert-error hidden" role="alert"></div>
+
+        <button type="submit" id="btn-login-submit" class="btn btn-primary btn-full">
+          Sign In to Control Plane
+        </button>
+      </form>
+
+      <div class="login-footer">
+        <span>Secured with HttpOnly session cookies &amp; constant-time verification</span>
+        <span aria-hidden="true">·</span>
+        <a href="/demo.html" class="text-link">View Public Widget Demo</a>
+        <span aria-hidden="true">·</span>
+        <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="text-link">Download Full Project (.zip)</a>
+      </div>
+    </div>
+  </main>
+  <script src="/static/js/dashboard.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,64 @@
+services:
+  - type: web
+    name: orbit-ai
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /ready
+    envVars:
+      - key: APP_ENV
+        value: production
+
+      - key: DATABASE_PROVIDER
+        value: supabase
+
+      - key: STORAGE_PROVIDER
+        value: supabase
+
+      - key: VECTOR_PROVIDER
+        value: supabase
+
+      - key: SUPABASE_STORAGE_BUCKET
+        value: knowledge
+
+      - key: SUPABASE_VECTOR_DIMENSIONS
+        value: "128"
+
+      - key: ADMIN_API_KEY
+        sync: false
+
+      - key: ALLOWED_ORIGINS
+        sync: false
+
+      - key: SUPABASE_URL
+        sync: false
+
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      - key: LLM_PROVIDER_TYPE
+        value: openai-compatible
+
+      - key: LLM_PROVIDER_NAME
+        sync: false
+
+      - key: LLM_BASE_URL
+        sync: false
+
+      - key: LLM_API_KEY
+        sync: false
+
+      - key: LLM_MODEL
+        sync: false
+
+      - key: LLM_TIMEOUT_MS
+        value: "15000"
+
+      - key: LLM_MAX_RETRIES
+        value: "2"
+
+      - key: NOTIFICATION_PROVIDER
+        value: supabase
+
+      - key: ORBIT_RAG_DIAGNOSTICS
+        value: "0"

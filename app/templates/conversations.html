@@ -1,0 +1,27 @@
+<section id="view-conversations" class="workspace-view hidden" aria-label="Customer Conversations">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Customer Conversations &amp; Grounding Audit</h2>
+      <p class="section-desc">Inspect tenant-scoped chat transcripts, retrieved RAG sources, grounding verification, and AI summaries.</p>
+    </div>
+    <div class="filter-bar">
+      <select id="conv-tenant-select" class="form-select" aria-label="Conversation Tenant Filter"></select>
+      <input type="search" id="conv-search-input" class="form-input" placeholder="Search transcripts or session ID..." aria-label="Search conversations" />
+    </div>
+  </div>
+
+  <div class="master-detail-grid">
+    <div class="surface-card list-pane">
+      <h3 class="card-title">Sessions</h3>
+      <div id="conversations-list" class="item-list" role="list"></div>
+    </div>
+    <div class="surface-card detail-pane">
+      <div id="conversation-detail-header" class="detail-header">
+        <h3 id="conv-detail-title" class="card-title">Select a conversation to inspect messages</h3>
+        <span id="conv-detail-meta" class="meta-inline font-mono"></span>
+      </div>
+      <div id="conversation-summary-box" class="summary-callout hidden"></div>
+      <div id="conversation-messages-pane" class="messages-transcript"></div>
+    </div>
+  </div>
+</section>

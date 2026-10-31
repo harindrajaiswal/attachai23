@@ -1,0 +1,37 @@
+<section id="view-clients" class="workspace-view hidden" aria-label="Clients and Tenants">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Tenants &amp; Isolation Policies</h2>
+      <p class="section-desc">Create and configure isolated business tenants, API credentials, domain allowlists, prompts, and widget themes.</p>
+    </div>
+    <button type="button" id="btn-open-create-tenant" class="btn btn-primary">Create Tenant</button>
+  </div>
+
+  <div id="raw-key-banner" class="key-reveal-banner hidden" role="region" aria-label="Newly Generated API Key">
+    <div class="key-reveal-header">
+      <strong>Store this Tenant API Key now — it is only shown once</strong>
+      <button type="button" id="btn-dismiss-key-banner" class="btn btn-ghost btn-sm">Dismiss</button>
+    </div>
+    <p class="key-reveal-note">Orbit AI stores only the SHA-256 hash in the database. Copy this public widget key for your embed script:</p>
+    <div class="key-reveal-row">
+      <code id="raw-key-value" class="font-mono key-code"></code>
+      <button type="button" id="btn-copy-raw-key" class="btn btn-secondary btn-sm">Copy Key</button>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <table class="data-table" aria-label="Tenants table">
+      <thead>
+        <tr>
+          <th>Business &amp; Slug</th>
+          <th>Assistant</th>
+          <th>Allowed Domains</th>
+          <th>Status</th>
+          <th class="num-col">Retrieval</th>
+          <th class="actions-col">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="tenants-table-body"></tbody>
+    </table>
+  </div>
+</section>

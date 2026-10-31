@@ -1,0 +1,28 @@
+# Core Web Framework & ASGI Server
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+jinja2==3.1.5
+
+# Data Validation & Settings
+pydantic==2.10.4
+pydantic-settings==2.7.1
+email-validator==2.2.0
+
+# HTTP & Cloud Providers
+httpx==0.28.1
+supabase==2.11.0
+
+# Database & Local Persistence
+sqlalchemy==2.0.36
+aiosqlite==0.20.0
+
+# Document Ingestion & Parsing
+pypdf==5.1.0
+python-docx==1.1.2
+
+# Testing, Linting & Type Checking
+pytest==8.3.4
+pytest-asyncio==0.25.2
+ruff==0.8.6
+mypy==1.14.1

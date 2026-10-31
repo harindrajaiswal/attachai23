@@ -1,0 +1,49 @@
+<section id="view-knowledge" class="workspace-view hidden" aria-label="Knowledge Base Ingestion">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Knowledge Ingestion &amp; Safe Reindexing</h2>
+      <p class="section-desc">Upload PDF, DOCX, TXT, Markdown, or CSV files. Versioned staging indexes verify embeddings before replacing active vectors.</p>
+    </div>
+    <div class="filter-bar">
+      <label for="knowledge-tenant-select" class="sr-only">Filter by Tenant</label>
+      <select id="knowledge-tenant-select" class="form-select" aria-label="Knowledge Tenant Filter"></select>
+    </div>
+  </div>
+
+  <div class="split-grid">
+    <div class="surface-card">
+      <h3 class="card-title">Upload Document</h3>
+      <form id="knowledge-upload-form" class="stack-form">
+        <div class="form-group">
+          <label for="upload-tenant-id" class="form-label">Target Tenant</label>
+          <select id="upload-tenant-id" name="tenant_id" class="form-select" required></select>
+        </div>
+        <div class="form-group">
+          <label for="upload-file-input" class="form-label">Document File (PDF, DOCX, TXT, MD, CSV · Max 10 MB)</label>
+          <input type="file" id="upload-file-input" name="file" class="form-input" accept=".txt,.md,.markdown,.csv,.pdf,.docx" required />
+        </div>
+        <div id="upload-status-msg" class="alert hidden" role="status"></div>
+        <button type="submit" id="btn-upload-knowledge" class="btn btn-primary">Upload &amp; Index Document</button>
+      </form>
+    </div>
+
+    <div class="surface-card">
+      <h3 class="card-title">Indexed Documents</h3>
+      <div class="table-responsive">
+        <table class="data-table" aria-label="Knowledge documents table">
+          <thead>
+            <tr>
+              <th>Filename</th>
+              <th>Tenant</th>
+              <th>Status &amp; Version</th>
+              <th class="num-col">Size</th>
+              <th class="num-col">Chunks</th>
+              <th class="actions-col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="knowledge-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>

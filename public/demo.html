@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Orbit AI — Customer Website Widget Demo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Plus+Jakarta+Sans:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/css/dashboard.css" />
+  <link rel="stylesheet" href="/static/css/widget.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-breadcrumb">
+      <span class="brand-title">Orbit AI</span>
+      <span class="breadcrumb-sep" aria-hidden="true">/</span>
+      <span class="breadcrumb-current">Live Customer Website Widget Sandbox</span>
+    </div>
+    <div class="topbar-actions">
+      <a href="/orbit-ai-full.zip" download="orbit-ai-full.zip" class="btn btn-secondary">Download Full Project (.zip)</a>
+      <a href="/admin" class="btn btn-secondary">Open Admin Dashboard</a>
+    </div>
+  </header>
+
+  <main class="workspace-main">
+    <div class="split-grid">
+      <div class="surface-card">
+        <h1 class="section-title" style="margin-bottom: 8px;">Interactive Multi-Tenant Widget Test Bench</h1>
+        <p class="section-desc" style="margin-bottom: 20px;">
+          Select an active tenant or enter any generated Tenant API Key to mount the live customer widget on this page. The widget loads its theme, welcome message, suggested questions, grounded RAG answers, and lead capture workflow from <code>/v1/config</code>, <code>/v1/chat</code>, and <code>/v1/leads</code>.
+        </p>
+
+        <form id="demo-widget-loader-form" class="stack-form">
+          <div class="form-group">
+            <label for="demo-tenant-preset" class="form-label">Select Demo Tenant Preset</label>
+            <select id="demo-tenant-preset" class="form-select"></select>
+          </div>
+          <div class="form-group">
+            <label for="demo-client-id" class="form-label">Tenant Client ID (UUID)</label>
+            <input type="text" id="demo-client-id" class="form-input font-mono" required />
+          </div>
+          <div class="form-group">
+            <label for="demo-api-key" class="form-label">Tenant Public API Key (<code>x-api-key</code>)</label>
+            <input type="text" id="demo-api-key" class="form-input font-mono" required />
+          </div>
+          <button type="submit" id="btn-mount-demo-widget" class="btn btn-primary">
+            Mount &amp; Open Tenant Widget
+          </button>
+        </form>
+      </div>
+
+      <div class="surface-card">
+        <h3 class="card-title">Sample Questions to Test Grounded RAG</h3>
+        <div class="stack-list">
+          <div class="list-row">
+            <div>
+              <strong>Supported Fact Query (Apex Performance Club)</strong>
+              <div class="meta-inline">"What are your membership plans and pricing?" → Returns grounded $59 Core and $99 Peak pricing from handbook.</div>
+            </div>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Follow-Up &amp; Conversation Summary</strong>
+              <div class="meta-inline">Ask "What are the opening hours?" then "Can you summarize our conversation?" → Generates an actual LLM summary of prior turns.</div>
+            </div>
+          </div>
+          <div class="list-row">
+            <div>
+              <strong>Unverified / Out-of-Scope Query (Fallback + Lead Capture)</strong>
+              <div class="meta-inline">"Do you offer helicopter landing pads?" → Rejects unverified claim, returns tenant fallback message, and opens the idempotent lead capture form.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script src="/static/js/widget.js"></script>
+  <script>
+    (async function () {
+      try {
+        var res = await fetch("/api/demo-tenants");
+        var data = await res.json();
+        var tenants = data.tenants || [];
+        var select = document.getElementById("demo-tenant-preset");
+        var cidInput = document.getElementById("demo-client-id");
+        var keyInput = document.getElementById("demo-api-key");
+
+        select.innerHTML = tenants
+          .map(function (t, i) {
+            return '<option value="' + i + '">' + t.business_name + " (" + t.slug + ")</option>";
+          })
+          .join("");
+
+        function applyPreset(idx) {
+          var item = tenants[idx];
+          if (!item) return;
+          cidInput.value = item.id;
+          keyInput.value = item.demo_api_key || "";
+          if (item.demo_api_key && window.OrbitWidget) {
+            window.OrbitWidget.init({
+              baseUrl: window.location.origin,
+              clientId: item.id,
+              apiKey: item.demo_api_key,
+              startOpen: true,
+            });
+          }
+        }
+
+        select.addEventListener("change", function () {
+          applyPreset(Number(select.value));
+        });
+
+        document.getElementById("demo-widget-loader-form").addEventListener("submit", function (ev) {
+          ev.preventDefault();
+          if (window.OrbitWidget) {
+            window.OrbitWidget.init({
+              baseUrl: window.location.origin,
+              clientId: cidInput.value.trim(),
+              apiKey: keyInput.value.trim(),
+              startOpen: true,
+            });
+          }
+        });
+
+        if (tenants.length > 0) {
+          applyPreset(0);
+        }
+      } catch (_e) {}
+    })();
+  </script>
+</body>
+</html>

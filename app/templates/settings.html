@@ -1,0 +1,33 @@
+<section id="view-settings" class="workspace-view hidden" aria-label="Provider Diagnostics and Settings">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Provider Diagnostics &amp; Outbox Health</h2>
+      <p class="section-desc">Verify real connectivity across Database, Supabase pgvector, Storage, LLM, Embeddings, and Notification Outbox. Secrets are strictly masked.</p>
+    </div>
+    <div class="filter-bar">
+      <button type="button" id="btn-test-providers" class="btn btn-primary">Run Live Connection Test</button>
+      <button type="button" id="btn-retry-notifications" class="btn btn-secondary">Retry Failed Notifications</button>
+    </div>
+  </div>
+
+  <div id="provider-test-banner" class="alert hidden" role="status"></div>
+
+  <div id="providers-diagnostics-grid" class="diagnostics-grid"></div>
+
+  <div class="surface-card" style="margin-top: 24px;">
+    <h3 class="card-title">Notification Outbox Queue</h3>
+    <table class="data-table" aria-label="Notification outbox table">
+      <thead>
+        <tr>
+          <th>Subject &amp; Recipient</th>
+          <th>Channel</th>
+          <th>Status</th>
+          <th class="num-col">Attempts</th>
+          <th>Last Error</th>
+          <th class="num-col">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="notifications-table-body"></tbody>
+    </table>
+  </div>
+</section>

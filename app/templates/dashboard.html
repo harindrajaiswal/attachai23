@@ -1,0 +1,314 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="dashboard-layout">
+  <!-- Sidebar Navigation (256px) -->
+  <aside class="sidebar" aria-label="Primary Navigation">
+    <div class="sidebar-brand">
+      <span class="brand-title">Orbit AI</span>
+    </div>
+
+    <nav class="sidebar-nav">
+      <button type="button" class="nav-item active" data-target="view-overview">Overview</button>
+      <button type="button" class="nav-item" data-target="view-clients">Clients &amp; Tenants</button>
+      <button type="button" class="nav-item" data-target="view-knowledge">Knowledge Base</button>
+      <button type="button" class="nav-item" data-target="view-conversations">Conversations</button>
+      <button type="button" class="nav-item" data-target="view-leads">Leads CRM</button>
+      <button type="button" class="nav-item" data-target="view-prompts">Prompt &amp; RAG Studio</button>
+      <button type="button" class="nav-item" data-target="view-widget">Widget Config &amp; Embed</button>
+      <button type="button" class="nav-item" data-target="view-analytics">Analytics</button>
+      <button type="button" class="nav-item" data-target="view-settings">Provider Diagnostics</button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <button type="button" id="btn-admin-logout" class="btn btn-ghost btn-full">Sign Out</button>
+    </div>
+  </aside>
+
+  <!-- Main Workspace -->
+  <div class="workspace-shell">
+    {% include "partials/header.html" %}
+
+    <main class="workspace-main">
+      <!-- 1. OVERVIEW VIEW -->
+      <section id="view-overview" class="workspace-view" aria-label="Platform Overview">
+        <div class="section-header">
+          <div>
+            <h1 class="section-title">Multi-Tenant Operations Overview</h1>
+            <p class="section-desc">Live operational metrics across isolated tenants, knowledge vector indexes, customer sessions, and lead capture.</p>
+          </div>
+          <button type="button" id="btn-refresh-overview" class="btn btn-secondary">Refresh Data</button>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <span class="kpi-label">Tenants (Active / Total)</span>
+            <strong id="kpi-tenants" class="kpi-value font-mono">0 / 0</strong>
+            <span class="kpi-sub">Strict tenant &amp; RLS isolation</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Customer Conversations</span>
+            <strong id="kpi-conversations" class="kpi-value font-mono">0</strong>
+            <span id="kpi-messages-sub" class="kpi-sub font-mono">0 messages persisted</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Captured Leads</span>
+            <strong id="kpi-leads" class="kpi-value font-mono">0</strong>
+            <span class="kpi-sub">Idempotent outbox pipeline</span>
+          </div>
+          <div class="kpi-card">
+            <span class="kpi-label">Indexed Knowledge Chunks</span>
+            <strong id="kpi-chunks" class="kpi-value font-mono">0</strong>
+            <span id="kpi-files-sub" class="kpi-sub font-mono">0 ready documents (128d)</span>
+          </div>
+        </div>
+
+        <div class="split-grid">
+          <div class="surface-card">
+            <h3 class="card-title">Provider Readiness Summary</h3>
+            <div id="overview-providers-list" class="stack-list"></div>
+          </div>
+          <div class="surface-card">
+            <h3 class="card-title">Recent Security &amp; Admin Audit Trail</h3>
+            <div id="overview-audit-list" class="stack-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. CLIENTS VIEW -->
+      {% include "clients.html" %}
+
+      <!-- 3. KNOWLEDGE VIEW -->
+      {% include "knowledge.html" %}
+
+      <!-- 4. CONVERSATIONS VIEW -->
+      {% include "conversations.html" %}
+
+      <!-- 5. LEADS VIEW -->
+      {% include "leads.html" %}
+
+      <!-- 6. PROMPT & RAG STUDIO VIEW -->
+      <section id="view-prompts" class="workspace-view hidden" aria-label="Prompt Management and Preview">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Prompt Versioning &amp; Grounded RAG Preview</h2>
+            <p class="section-desc">Edit tenant system prompts, save immutable versions, restore historical versions, and test grounded responses.</p>
+          </div>
+          <div class="filter-bar">
+            <select id="prompt-tenant-select" class="form-select" aria-label="Prompt Tenant Selector"></select>
+          </div>
+        </div>
+
+        <div class="split-grid">
+          <div class="surface-card">
+            <h3 class="card-title">System Prompt &amp; Fallback Editor</h3>
+            <form id="prompt-editor-form" class="stack-form">
+              <div class="form-group">
+                <label for="prompt-system-textarea" class="form-label">System Prompt</label>
+                <textarea id="prompt-system-textarea" rows="5" class="form-textarea" required></textarea>
+              </div>
+              <div class="form-group">
+                <label for="prompt-fallback-textarea" class="form-label">Unverified / Fallback Answer</label>
+                <textarea id="prompt-fallback-textarea" rows="3" class="form-textarea" required></textarea>
+              </div>
+              <div class="form-group">
+                <label for="prompt-version-note" class="form-label">Version Change Note</label>
+                <input type="text" id="prompt-version-note" class="form-input" placeholder="e.g., Added holiday hours guidance" />
+              </div>
+              <div id="prompt-save-msg" class="alert hidden" role="status"></div>
+              <button type="submit" class="btn btn-primary">Save New Prompt Version</button>
+            </form>
+
+            <div style="margin-top: 24px;">
+              <h4 class="card-subtitle">Version History</h4>
+              <div id="prompt-versions-list" class="stack-list"></div>
+            </div>
+          </div>
+
+          <div class="surface-card">
+            <h3 class="card-title">Live Grounded Assistant Preview</h3>
+            <form id="prompt-preview-form" class="stack-form">
+              <div class="form-group">
+                <label for="prompt-preview-question" class="form-label">Test Customer Question</label>
+                <input type="text" id="prompt-preview-question" class="form-input" placeholder="Ask a question against this tenant's knowledge..." required />
+              </div>
+              <button type="submit" id="btn-run-prompt-preview" class="btn btn-secondary">Test RAG &amp; Grounding</button>
+            </form>
+            <div id="prompt-preview-result" class="preview-output hidden"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 7. WIDGET CONFIG & EMBED CODE VIEW -->
+      <section id="view-widget" class="workspace-view hidden" aria-label="Widget Configuration">
+        <div class="section-header">
+          <div>
+            <h2 class="section-title">Widget Appearance &amp; Embed Generator</h2>
+            <p class="section-desc">Customize per-tenant theme mode, primary color, dimensions, suggested questions, and copy the single-tag embed snippet.</p>
+          </div>
+          <div class="filter-bar">
+            <select id="widget-tenant-select" class="form-select" aria-label="Widget Tenant Selector"></select>
+          </div>
+        </div>
+
+        <div class="split-grid">
+          <div class="surface-card">
+            <h3 class="card-title">Theme &amp; Layout Configuration</h3>
+            <form id="widget-config-form" class="stack-form">
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="wg-assistant-name" class="form-label">Assistant Name</label>
+                  <input type="text" id="wg-assistant-name" class="form-input" required />
+                </div>
+                <div class="form-group">
+                  <label for="wg-primary-color" class="form-label">Primary Accent Color</label>
+                  <input type="text" id="wg-primary-color" class="form-input font-mono" placeholder="#2563eb" required />
+                </div>
+              </div>
+              <div class="form-row-2">
+                <div class="form-group">
+                  <label for="wg-theme-mode" class="form-label">Theme Mode</label>
+                  <select id="wg-theme-mode" class="form-select">
+                    <option value="light">Light Mode</option>
+                    <option value="dark">Dark Mode</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="wg-position" class="form-label">Screen Position</label>
+                  <select id="wg-position" class="form-select">
+                    <option value="bottom-right">Bottom Right</option>
+                    <option value="bottom-left">Bottom Left</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row-3">
+                <div class="form-group">
+                  <label for="wg-width" class="form-label">Width (px)</label>
+                  <input type="number" id="wg-width" class="form-input font-mono" min="280" max="600" value="380" />
+                </div>
+                <div class="form-group">
+                  <label for="wg-height" class="form-label">Height (px)</label>
+                  <input type="number" id="wg-height" class="form-input font-mono" min="360" max="840" value="560" />
+                </div>
+                <div class="form-group">
+                  <label for="wg-radius" class="form-label">Radius (px)</label>
+                  <input type="number" id="wg-radius" class="form-input font-mono" min="0" max="32" value="14" />
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="wg-welcome" class="form-label">Welcome Message</label>
+                <input type="text" id="wg-welcome" class="form-input" required />
+              </div>
+              <div class="form-group">
+                <label for="wg-placeholder" class="form-label">Input Placeholder</label>
+                <input type="text" id="wg-placeholder" class="form-input" required />
+              </div>
+              <div class="form-group">
+                <label for="wg-questions" class="form-label">Suggested Questions (one per line)</label>
+                <textarea id="wg-questions" rows="3" class="form-textarea"></textarea>
+              </div>
+              <div id="widget-save-msg" class="alert hidden" role="status"></div>
+              <button type="submit" class="btn btn-primary">Save Widget Configuration</button>
+            </form>
+          </div>
+
+          <div class="surface-card">
+            <h3 class="card-title">Embed Code &amp; Live Theme Preview</h3>
+            <p class="section-desc">Paste this script tag before <code>&lt;/body&gt;</code> on the tenant's website:</p>
+            <pre id="widget-embed-code" class="code-block font-mono"></pre>
+            <div class="action-row">
+              <button type="button" id="btn-copy-embed" class="btn btn-secondary btn-sm">Copy Embed Script</button>
+              <a id="link-test-in-demo" href="/demo.html" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">Test in Live Demo Page</a>
+            </div>
+
+            <div id="dashboard-widget-preview" class="widget-preview-frame" style="margin-top: 20px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 8. ANALYTICS VIEW -->
+      {% include "analytics.html" %}
+
+      <!-- 9. PROVIDER DIAGNOSTICS VIEW -->
+      {% include "settings.html" %}
+    </main>
+  </div>
+</div>
+
+<!-- Create / Edit Tenant Modal -->
+<dialog id="modal-tenant" class="modal-dialog" aria-labelledby="modal-tenant-title">
+  <form id="form-tenant-modal" class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-tenant-title" class="card-title">Create New Tenant</h3>
+      <button type="button" id="btn-close-tenant-modal" class="btn btn-ghost btn-sm">Close</button>
+    </div>
+    <input type="hidden" id="tenant-edit-id" value="" />
+    <div class="form-row-2">
+      <div class="form-group">
+        <label for="tenant-business-name" class="form-label">Business Name</label>
+        <input type="text" id="tenant-business-name" class="form-input" placeholder="e.g., Test Company" required />
+      </div>
+      <div class="form-group">
+        <label for="tenant-slug" class="form-label">Unique Slug</label>
+        <input type="text" id="tenant-slug" class="form-input font-mono" placeholder="e.g., test-company" required />
+      </div>
+    </div>
+    <div class="form-row-2">
+      <div class="form-group">
+        <label for="tenant-company-name" class="form-label">Legal / Company Name</label>
+        <input type="text" id="tenant-company-name" class="form-input" placeholder="Test Company Inc." />
+      </div>
+      <div class="form-group">
+        <label for="tenant-assistant-name" class="form-label">Assistant Name</label>
+        <input type="text" id="tenant-assistant-name" class="form-input" placeholder="Test Assistant" required />
+      </div>
+    </div>
+    <div class="form-group">
+      <label for="tenant-domains" class="form-label">Allowed Website Domains (comma-separated)</label>
+      <input type="text" id="tenant-domains" class="form-input font-mono" placeholder="example.com, localhost" />
+    </div>
+    <div class="form-group">
+      <label for="tenant-welcome-msg" class="form-label">Welcome Message</label>
+      <input type="text" id="tenant-welcome-msg" class="form-input" value="Hello! How can I help you today?" />
+    </div>
+    <div id="tenant-modal-error" class="alert alert-error hidden" role="alert"></div>
+    <div class="modal-footer">
+      <button type="button" id="btn-cancel-tenant-modal" class="btn btn-secondary">Cancel</button>
+      <button type="submit" id="btn-save-tenant-modal" class="btn btn-primary">Save Tenant</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Lead Edit Modal -->
+<dialog id="modal-lead" class="modal-dialog" aria-labelledby="modal-lead-title">
+  <form id="form-lead-modal" class="modal-content">
+    <div class="modal-header">
+      <h3 id="modal-lead-title" class="card-title">Update Lead Workflow</h3>
+      <button type="button" id="btn-close-lead-modal" class="btn btn-ghost btn-sm">Close</button>
+    </div>
+    <input type="hidden" id="lead-edit-id" />
+    <input type="hidden" id="lead-edit-tenant-id" />
+    <div class="form-group">
+      <label for="lead-edit-status" class="form-label">Workflow Status</label>
+      <select id="lead-edit-status" class="form-select">
+        <option value="new">new</option>
+        <option value="contacted">contacted</option>
+        <option value="qualified">qualified</option>
+        <option value="won">won</option>
+        <option value="lost">lost</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="lead-edit-assignee" class="form-label">Assigned Owner</label>
+      <input type="text" id="lead-edit-assignee" class="form-input" placeholder="e.g., Sarah Jenkins" />
+    </div>
+    <div class="form-group">
+      <label for="lead-edit-notes" class="form-label">Internal Notes</label>
+      <textarea id="lead-edit-notes" rows="3" class="form-textarea"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="btn-cancel-lead-modal" class="btn btn-secondary">Cancel</button>
+      <button type="submit" class="btn btn-primary">Update Lead</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

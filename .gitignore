@@ -1,0 +1,41 @@
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments & caches
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local databases, uploads & storage artifacts
+*.db
+*.db-journal
+*.db-wal
+*.sqlite
+*.sqlite3
+local_storage/
+data/
+uploads/
+downloaded_documents/
+outbox_data/
+*.log
+
+# Playwright & test artifacts
+.playwright-cli/
+test-results/
+
+# Node / IDE artifacts
+node_modules/
+dist/
+.DS_Store
+.idea/
+.vscode/

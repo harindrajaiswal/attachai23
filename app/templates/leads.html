@@ -1,0 +1,38 @@
+<section id="view-leads" class="workspace-view hidden" aria-label="Captured Leads">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Lead Management &amp; CRM Workflow</h2>
+      <p class="section-desc">Track customer leads, update pipeline stages, assign owners, record internal notes, and export RFC 4180 CSV reports.</p>
+    </div>
+    <div class="filter-bar">
+      <select id="leads-tenant-select" class="form-select" aria-label="Lead Tenant Filter"></select>
+      <select id="leads-status-select" class="form-select" aria-label="Lead Status Filter">
+        <option value="">All Statuses</option>
+        <option value="new">new</option>
+        <option value="contacted">contacted</option>
+        <option value="qualified">qualified</option>
+        <option value="won">won</option>
+        <option value="lost">lost</option>
+      </select>
+      <input type="search" id="leads-search-input" class="form-input" placeholder="Search name, email, phone..." aria-label="Search leads" />
+      <button type="button" id="btn-export-leads-csv" class="btn btn-secondary">Export CSV</button>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <table class="data-table" aria-label="Leads table">
+      <thead>
+        <tr>
+          <th>Contact</th>
+          <th>Requirement &amp; Message</th>
+          <th>Status</th>
+          <th>Assignee</th>
+          <th>Notification Outbox</th>
+          <th class="num-col">Created</th>
+          <th class="actions-col">Manage</th>
+        </tr>
+      </thead>
+      <tbody id="leads-table-body"></tbody>
+    </table>
+  </div>
+</section>

@@ -1,0 +1,73 @@
+<section id="view-analytics" class="workspace-view hidden" aria-label="Analytics and Telemetry">
+  <div class="section-header">
+    <div>
+      <h2 class="section-title">Platform &amp; Tenant Analytics</h2>
+      <p class="section-desc">Real persisted metrics from database usage logs, conversation histories, and grounding evaluations.</p>
+    </div>
+    <div class="filter-bar">
+      <select id="analytics-tenant-select" class="form-select" aria-label="Analytics Tenant Filter"></select>
+      <input type="date" id="analytics-start-date" class="form-input font-mono" aria-label="Start Date" />
+      <input type="date" id="analytics-end-date" class="form-input font-mono" aria-label="End Date" />
+      <button type="button" id="btn-apply-analytics-filter" class="btn btn-secondary">Apply Filter</button>
+    </div>
+  </div>
+
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <span class="kpi-label">Total Requests</span>
+      <strong id="an-total-requests" class="kpi-value font-mono">0</strong>
+      <span class="kpi-sub">Persisted usage logs</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Usage Units</span>
+      <strong id="an-usage-units" class="kpi-value font-mono">0</strong>
+      <span class="kpi-sub">Token &amp; index units</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Average Latency</span>
+      <strong id="an-avg-latency" class="kpi-value font-mono">0 ms</strong>
+      <span id="an-p95-latency" class="kpi-sub font-mono">p95: 0 ms</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Grounded Support Breakdown</span>
+      <strong id="an-support-ratio" class="kpi-value font-mono">0 / 0 / 0</strong>
+      <span class="kpi-sub">Supported · Partial · Unknown</span>
+    </div>
+  </div>
+
+  <div class="split-grid">
+    <div class="surface-card">
+      <h3 class="card-title">Daily Activity Series</h3>
+      <table class="data-table" aria-label="Daily analytics table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th class="num-col">Conversations</th>
+            <th class="num-col">Messages</th>
+            <th class="num-col">Leads</th>
+            <th class="num-col">Usage Units</th>
+            <th class="num-col">Avg Latency</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-daily-body"></tbody>
+      </table>
+    </div>
+
+    <div class="surface-card">
+      <h3 class="card-title">Per-Tenant Breakdown</h3>
+      <table class="data-table" aria-label="Tenant analytics breakdown">
+        <thead>
+          <tr>
+            <th>Tenant</th>
+            <th class="num-col">Convs</th>
+            <th class="num-col">Msgs</th>
+            <th class="num-col">Leads</th>
+            <th class="num-col">Chunks</th>
+            <th class="num-col">Latency</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-tenant-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
